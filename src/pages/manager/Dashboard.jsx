@@ -21,15 +21,25 @@ export default function Dashboard() {
   const soundRef = useRef(true)
   soundRef.current = soundOn
 
+  const [loadError, setLoadError] = useState(null)
+
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('orders')
-      .select('*, order_items(*)')
-      .eq('restaurant_id', restaurant.id)
-      .is('closed_at', null)
-      .order('created_at', { ascending: true })
-    setOrders(data || [])
-    setLoading(false)
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .eq('restaurant_id', restaurant.id)
+        .is('closed_at', null)
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      setOrders(data || [])
+      setLoadError(null)
+    } catch (e) {
+      console.error('[Dashboard] load error:', e)
+      setLoadError(e.message || 'Errore nel caricamento degli ordini.')
+    } finally {
+      setLoading(false)
+    }
   }, [restaurant.id])
 
   useEffect(() => { load() }, [load])
@@ -68,13 +78,13 @@ export default function Dashboard() {
 
   function patchItem(orderId, itemId, status) {
     setOrders(prev => prev.map(o => o.id !== orderId ? o : {
-      ...o, order_items: o.order_items.map(i => i.id === itemId ? { ...i, status } : i),
+      ...o, order_items: (o.order_items || []).map(i => i.id === itemId ? { ...i, status } : i),
     }))
   }
 
   function patchItems(orderId, ids, status) {
     setOrders(prev => prev.map(o => o.id !== orderId ? o : {
-      ...o, order_items: o.order_items.map(i => ids.includes(i.id) ? { ...i, status } : i),
+      ...o, order_items: (o.order_items || []).map(i => ids.includes(i.id) ? { ...i, status } : i),
     }))
   }
 
@@ -99,6 +109,13 @@ export default function Dashboard() {
   }
 
   if (loading) return <Spinner label="Carico ordini…" />
+  if (loadError) return (
+    <div style={{ maxWidth: 600, margin: '40px auto', padding: 20, background: T.surface, border: `1px solid ${T.primary}`, borderRadius: T.rCard }}>
+      <p style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, color: T.primary, margin: '0 0 8px' }}>Errore caricamento ordini</p>
+      <p style={{ fontFamily: T.mono, fontSize: 13, color: T.text, margin: 0 }}>{loadError}</p>
+      <button onClick={load} style={{ marginTop: 16, fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', cursor: 'pointer', padding: '8px 16px', background: T.primary, color: '#fff', border: 'none', borderRadius: T.rBtn }}>Riprova</button>
+    </div>
+  )
 
   const inCorso = orders.filter(hasActiveItems)
   const daPagare = orders.filter(allReady)
