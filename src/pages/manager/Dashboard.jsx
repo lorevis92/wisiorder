@@ -7,7 +7,7 @@ import { Button, Badge, Spinner } from '../../components/UI'
 import { initAudio, beep, vibrate } from '../../lib/sound'
 
 const hasActiveItems = (order) =>
-  (order.order_items || []).some(i => i.status === 'pending' || i.status === 'preparing')
+  (order.order_items || []).some(i => i.status !== 'ready')
 
 const isAllReady = (order) =>
   (order.order_items || []).length > 0 &&
@@ -124,7 +124,7 @@ export default function Dashboard() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
-            Cucina
+            Ordini
           </h1>
           <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textSecondary, margin: '4px 0 0' }}>
             {orders.length === 0
