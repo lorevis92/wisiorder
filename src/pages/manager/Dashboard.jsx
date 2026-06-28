@@ -10,6 +10,15 @@ const isReady = (i) => i.status === 'ready'
 const isPreparing = (i) => i.status === 'preparing'
 const isPending = (i) => !isReady(i) && !isPreparing(i)
 
+const sortItems = (arr) => [...(arr || [])].sort((a, b) => {
+  const ca = a.created_at || '', cb = b.created_at || ''
+  if (ca !== cb) return ca < cb ? -1 : 1
+  return a.id < b.id ? -1 : 1
+})
+
+const nextStatus = { pending: 'preparing', preparing: 'ready' }
+const prevStatus = { ready: 'preparing', preparing: 'pending' }
+
 export default function Dashboard() {
   const { restaurant } = useAuth()
   const [orders, setOrders] = useState([])
@@ -75,11 +84,6 @@ export default function Dashboard() {
     }))
   }
 
-  async function setItemStatus(orderId, itemId, status) {
-    patchItem(orderId, itemId, status)
-    await supabase.from('order_items').update({ status }).eq('id', itemId)
-  }
-
   async function advanceGroup(orderId, groupItems) {
     const pending = groupItems.filter(isPending)
     if (pending.length > 0) {
@@ -94,6 +98,20 @@ export default function Dashboard() {
       patchItems(orderId, ids, 'ready')
       await supabase.from('order_items').update({ status: 'ready' }).in('id', ids)
     }
+  }
+
+  async function advanceItem(orderId, item) {
+    const ns = nextStatus[item.status === 'queued' ? 'pending' : item.status]
+    if (!ns) return
+    patchItem(orderId, item.id, ns)
+    await supabase.from('order_items').update({ status: ns }).eq('id', item.id)
+  }
+
+  async function revertItem(orderId, item) {
+    const ps = prevStatus[item.status]
+    if (!ps) return
+    patchItem(orderId, item.id, ps)
+    await supabase.from('order_items').update({ status: ps }).eq('id', item.id)
   }
 
   async function closeOrder(order) {
@@ -139,7 +157,8 @@ export default function Dashboard() {
             <OrderCard
               key={o.id}
               order={o}
-              onSetItemStatus={setItemStatus}
+              onAdvanceItem={advanceItem}
+              onRevertItem={revertItem}
               onAdvanceGroup={advanceGroup}
               onClose={closeOrder}
             />
@@ -150,9 +169,9 @@ export default function Dashboard() {
   )
 }
 
-function OrderCard({ order, onSetItemStatus, onAdvanceGroup, onClose }) {
-  const items = order.order_items || []
-  const allReady = items.length > 0 && items.every(i => i.status === 'ready')
+function OrderCard({ order, onAdvanceItem, onRevertItem, onAdvanceGroup, onClose }) {
+  const items = sortItems(order.order_items || [])
+  const allReady = items.length > 0 && items.every(isReady)
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
 
   return (
@@ -202,7 +221,8 @@ function OrderCard({ order, onSetItemStatus, onAdvanceGroup, onClose }) {
                     catName={cat}
                     catItems={catMap[cat]}
                     orderId={order.id}
-                    onSetItemStatus={onSetItemStatus}
+                    onAdvanceItem={onAdvanceItem}
+                    onRevertItem={onRevertItem}
                     onAdvanceGroup={onAdvanceGroup}
                   />
                 ))}
@@ -221,18 +241,9 @@ function OrderCard({ order, onSetItemStatus, onAdvanceGroup, onClose }) {
   )
 }
 
-function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceGroup }) {
-  const [openItemId, setOpenItemId] = useState(null)
+function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onRevertItem, onAdvanceGroup }) {
   const hasPending = catItems.some(isPending)
   const hasPreparing = catItems.some(isPreparing)
-  const allReady = catItems.every(isReady)
-
-  useEffect(() => {
-    if (!openItemId) return
-    function handler() { setOpenItemId(null) }
-    document.addEventListener('click', handler)
-    return () => document.removeEventListener('click', handler)
-  }, [openItemId])
 
   return (
     <div style={{ background: T.surface, borderRadius: T.rSection, padding: '10px 12px' }}>
@@ -253,64 +264,25 @@ function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceG
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {catItems.map(item => (
-          <div key={item.id}>
-            <ItemRow
-              item={item}
-              isOpen={openItemId === item.id}
-              onRowClick={(e) => { e.stopPropagation(); setOpenItemId(openItemId === item.id ? null : item.id) }}
-            />
-            {openItemId === item.id && (
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{
-                  marginTop: 6, background: T.bg, border: `1px solid ${T.border}`,
-                  borderRadius: T.rSection, padding: '8px 10px',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                }}
-              >
-                <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.item_name}
-                </span>
-                {['pending', 'preparing', 'ready'].map(s => {
-                  const currentStatus = item.status === 'queued' ? 'pending' : (item.status || 'pending')
-                  const isActive = currentStatus === s
-                  const color = STATUS_COLOR[s]
-                  return (
-                    <button
-                      key={s}
-                      onClick={() => { onSetItemStatus(orderId, item.id, s); setOpenItemId(null) }}
-                      style={{
-                        fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
-                        border: `1px solid ${isActive ? color : T.border}`,
-                        borderRadius: T.rBtn, padding: '5px 10px', cursor: 'pointer', flexShrink: 0,
-                        background: isActive ? color : 'transparent',
-                        color: isActive ? (s === 'pending' ? T.text : '#fff') : T.textMuted,
-                      }}
-                    >{STATUS_LABEL[s]}</button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+          <ItemRow
+            key={item.id}
+            item={item}
+            onAdvance={() => onAdvanceItem(orderId, item)}
+            onRevert={() => onRevertItem(orderId, item)}
+          />
         ))}
       </div>
     </div>
   )
 }
 
-function ItemRow({ item, isOpen, onRowClick }) {
+function ItemRow({ item, onAdvance, onRevert }) {
   const statusKey = item.status === 'queued' ? 'pending' : (item.status || 'pending')
-  const dotColor = item.status === 'ready' ? T.green : item.status === 'preparing' ? T.yellow : T.textMuted
+  const dotColor = STATUS_COLOR[statusKey]
+  const canRevert = statusKey === 'preparing' || statusKey === 'ready'
+
   return (
-    <div
-      onClick={onRowClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-        borderRadius: T.rSection, padding: '3px 2px',
-        background: isOpen ? T.surfaceAlt : 'transparent',
-        transition: 'background 0.12s',
-      }}
-    >
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 2px' }}>
       <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'block' }} />
       <span style={{ flex: 1, minWidth: 0, fontFamily: T.syne, fontSize: 13, color: T.text }}>
         <span style={{ fontFamily: T.mono, fontWeight: 500, color: T.primary }}>{item.quantity}×</span>{' '}
@@ -319,12 +291,30 @@ function ItemRow({ item, isOpen, onRowClick }) {
           <span style={{ display: 'block', fontSize: 11, color: T.textSecondary, fontStyle: 'italic', marginTop: 1 }}>"{item.note}"</span>
         )}
       </span>
-      <span style={{ fontFamily: T.syne, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: STATUS_COLOR[statusKey], flexShrink: 0, whiteSpace: 'nowrap' }}>
-        {STATUS_LABEL[statusKey]}
-      </span>
       <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, whiteSpace: 'nowrap', flexShrink: 0 }}>
         {money(item.unit_price * item.quantity)}
       </span>
+      <span
+        onClick={canRevert ? onRevert : undefined}
+        style={{
+          fontFamily: T.syne, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5,
+          color: dotColor, flexShrink: 0, whiteSpace: 'nowrap',
+          cursor: canRevert ? 'pointer' : 'default',
+          textDecoration: canRevert ? 'underline' : 'none',
+        }}
+      >
+        {statusKey === 'ready' ? '✓ Pronto' : STATUS_LABEL[statusKey]}
+      </span>
+      {statusKey === 'pending' && (
+        <Button variant="ghost" onClick={onAdvance} style={{ padding: '3px 8px', fontSize: 10, flexShrink: 0 }}>
+          → Preparazione
+        </Button>
+      )}
+      {statusKey === 'preparing' && (
+        <Button variant="primary" onClick={onAdvance} style={{ padding: '3px 8px', fontSize: 10, flexShrink: 0 }}>
+          → Pronto
+        </Button>
+      )}
     </div>
   )
 }
