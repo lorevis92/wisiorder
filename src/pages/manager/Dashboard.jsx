@@ -6,6 +6,14 @@ import { money, relTime } from '../../lib/format'
 import { Button, Badge, Spinner } from '../../components/UI'
 import { initAudio, beep, vibrate } from '../../lib/sound'
 
+const hasActiveItems = (order) =>
+  (order.order_items || []).some(i => i.status === 'pending' || i.status === 'preparing')
+
+const allItemsReady = (order) => {
+  const items = order.order_items || []
+  return items.length > 0 && items.every(i => i.status === 'ready')
+}
+
 const tabStyle = (active) => ({
   fontFamily: T.syne, fontWeight: 700, fontSize: 13, textTransform: 'uppercase',
   letterSpacing: 0.5, padding: '8px 22px', borderRadius: T.rBtn, cursor: 'pointer',
@@ -91,8 +99,28 @@ export default function Dashboard() {
     await supabase.from('order_items').update({ status: targetStatus }).in('id', ids)
   }
 
+  async function deleteItem(orderId, itemId) {
+    const order = orders.find(o => o.id === orderId)
+    if (!order) return
+    if ((order.order_items || []).length <= 1) {
+      alert("Non è possibile rimuovere l'unica voce dell'ordine.")
+      return
+    }
+    if (!confirm("Rimuovere questo piatto dall'ordine?")) return
+    setOrders(prev => prev.map(o => o.id !== orderId ? o : {
+      ...o, order_items: o.order_items.filter(i => i.id !== itemId),
+    }))
+    await supabase.from('order_items').delete().eq('id', itemId)
+    load()
+  }
+
   async function closeOrder(order) {
-    if (!confirm(`Chiudere il conto #${order.order_number ?? '—'} di ${order.customer_name}?`)) return
+    const items = order.order_items || []
+    const hasNonReady = items.some(i => i.status !== 'ready')
+    const msg = hasNonReady
+      ? `Ci sono voci non ancora pronte. Chiudere comunque il conto #${order.order_number ?? '—'} di ${order.customer_name}?`
+      : `Chiudere il conto #${order.order_number ?? '—'} di ${order.customer_name}?`
+    if (!confirm(msg)) return
     setOrders(prev => prev.filter(o => o.id !== order.id))
     await supabase.from('orders').update({ closed_at: new Date().toISOString() }).eq('id', order.id)
   }
@@ -130,7 +158,14 @@ export default function Dashboard() {
         <CucinaTab orders={orders} onSetItemStatus={setItemStatus} onAdvanceGroup={advanceGroup} />
       )}
       {tab === 'sala' && (
-        <SalaTab orders={orders} onClose={closeOrder} onAddItem={(orderId) => setAddItemTarget(orderId)} />
+        <SalaTab
+          orders={orders}
+          onSetItemStatus={setItemStatus}
+          onAdvanceGroup={advanceGroup}
+          onDeleteItem={deleteItem}
+          onClose={closeOrder}
+          onAddItem={(orderId) => setAddItemTarget(orderId)}
+        />
       )}
 
       {addItemTarget && (
@@ -148,9 +183,7 @@ export default function Dashboard() {
 // ─── TAB CUCINA ───────────────────────────────────────────────────────────────
 
 function CucinaTab({ orders, onSetItemStatus, onAdvanceGroup }) {
-  const active = orders.filter(o =>
-    (o.order_items || []).some(i => i.status === 'pending' || i.status === 'preparing')
-  )
+  const active = orders.filter(hasActiveItems)
 
   if (active.length === 0) {
     return (
@@ -200,13 +233,7 @@ function OrderCardCucina({ order, onSetItemStatus, onAdvanceGroup }) {
       <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
         {rounds.map(round => {
           const roundItems = items.filter(i => (i.round ?? 1) === round)
-          const catMap = {}; const catOrder = []
-          for (const item of roundItems) {
-            const cat = item.category_name || 'Altro'
-            if (!catMap[cat]) { catMap[cat] = []; catOrder.push(cat) }
-            catMap[cat].push(item)
-          }
-          const sortedCats = [...catOrder.filter(c => c !== 'Altro'), ...(catOrder.includes('Altro') ? ['Altro'] : [])]
+          const { catMap, sortedCats } = groupByCategory(roundItems)
           return (
             <div key={round}>
               {round > 1 && <div style={{ marginBottom: 8 }}><Badge color={T.primary} bg={T.primaryLight}>➕ {round}° GIRO</Badge></div>}
@@ -214,7 +241,8 @@ function OrderCardCucina({ order, onSetItemStatus, onAdvanceGroup }) {
                 {sortedCats.map(cat => (
                   <CategoryGroup
                     key={`${round}-${cat}`}
-                    catName={cat} catItems={catMap[cat]}
+                    catName={cat}
+                    catItems={catMap[cat]}
                     orderId={order.id}
                     onSetItemStatus={onSetItemStatus}
                     onAdvanceGroup={onAdvanceGroup}
@@ -229,7 +257,161 @@ function OrderCardCucina({ order, onSetItemStatus, onAdvanceGroup }) {
   )
 }
 
-function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceGroup }) {
+// ─── TAB SALA ─────────────────────────────────────────────────────────────────
+
+function SalaTab({ orders, onSetItemStatus, onAdvanceGroup, onDeleteItem, onClose, onAddItem }) {
+  const daPagare = orders.filter(allItemsReady)
+  const inCorso = orders.filter(hasActiveItems)
+
+  if (orders.length === 0) {
+    return (
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 48, textAlign: 'center' }}>
+        <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary, margin: 0 }}>
+          Nessun ordine aperto al momento.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {daPagare.length > 0 && (
+        <div style={{ marginBottom: 28 }}>
+          <SectionDivider label="Da pagare" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14, alignItems: 'start' }}>
+            {daPagare.map(o => (
+              <OrderCardSala
+                key={o.id} order={o} isPronti
+                onSetItemStatus={onSetItemStatus}
+                onAdvanceGroup={onAdvanceGroup}
+                onDeleteItem={onDeleteItem}
+                onClose={onClose}
+                onAddItem={onAddItem}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {inCorso.length > 0 && (
+        <div>
+          <SectionDivider label="In corso" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14, alignItems: 'start' }}>
+            {inCorso.map(o => (
+              <OrderCardSala
+                key={o.id} order={o} isPronti={false}
+                onSetItemStatus={onSetItemStatus}
+                onAdvanceGroup={onAdvanceGroup}
+                onDeleteItem={onDeleteItem}
+                onClose={onClose}
+                onAddItem={onAddItem}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OrderCardSala({ order, isPronti, onSetItemStatus, onAdvanceGroup, onDeleteItem, onClose, onAddItem }) {
+  const items = order.order_items || []
+  const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
+  const borderColor = isPronti ? T.green : T.border
+
+  return (
+    <div style={{
+      background: T.bg, border: `1px solid ${borderColor}`,
+      borderRadius: T.rCard, padding: 18,
+      display: 'flex', flexDirection: 'column', gap: 12,
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.text }}>#{order.order_number ?? '—'}</span>
+            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{order.customer_name}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+            {order.table_number && <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>}
+            <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>{relTime(order.created_at)}</span>
+          </div>
+        </div>
+        <span style={{
+          fontFamily: T.mono, fontWeight: isPronti ? 700 : 500,
+          fontSize: isPronti ? 22 : 15,
+          color: isPronti ? T.green : T.textSecondary,
+          whiteSpace: 'nowrap',
+        }}>
+          {money(order.total)}
+        </span>
+      </div>
+
+      {/* Voci per round e categoria, con dot popover e cestino */}
+      <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {rounds.map(round => {
+          const roundItems = items.filter(i => (i.round ?? 1) === round)
+          const { catMap, sortedCats } = groupByCategory(roundItems)
+          return (
+            <div key={round}>
+              {round > 1 && <div style={{ marginBottom: 8 }}><Badge color={T.primary} bg={T.primaryLight}>➕ {round}° GIRO</Badge></div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {sortedCats.map(cat => (
+                  <CategoryGroup
+                    key={`${round}-${cat}`}
+                    catName={cat}
+                    catItems={catMap[cat]}
+                    orderId={order.id}
+                    onSetItemStatus={onSetItemStatus}
+                    onAdvanceGroup={onAdvanceGroup}
+                    onDeleteItem={onDeleteItem}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Footer azioni */}
+      <div style={{ display: 'flex', gap: 8, borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+        <Button variant="ghost" onClick={() => onAddItem(order.id)} style={{ fontSize: 12, padding: '7px 12px', whiteSpace: 'nowrap' }}>
+          + Aggiungi voce
+        </Button>
+        <Button variant="danger" onClick={() => onClose(order)} style={{ flex: 1, textAlign: 'center' }}>
+          Chiudi conto
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function SectionDivider({ label }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+      <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, whiteSpace: 'nowrap' }}>
+        {label}
+      </span>
+      <div style={{ flex: 1, height: 1, background: T.border }} />
+    </div>
+  )
+}
+
+// ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
+
+function groupByCategory(items) {
+  const catMap = {}
+  const catOrder = []
+  for (const item of items) {
+    const cat = item.category_name || 'Altro'
+    if (!catMap[cat]) { catMap[cat] = []; catOrder.push(cat) }
+    catMap[cat].push(item)
+  }
+  const sortedCats = [...catOrder.filter(c => c !== 'Altro'), ...(catOrder.includes('Altro') ? ['Altro'] : [])]
+  return { catMap, sortedCats }
+}
+
+function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceGroup, onDeleteItem }) {
   const [openItemId, setOpenItemId] = useState(null)
   const hasPending = catItems.some(i => i.status === 'pending')
   const hasPreparing = catItems.some(i => i.status === 'preparing')
@@ -270,13 +452,14 @@ function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceG
               item={item}
               isOpen={openItemId === item.id}
               onRowClick={(e) => { e.stopPropagation(); setOpenItemId(openItemId === item.id ? null : item.id) }}
+              onDelete={onDeleteItem ? (e) => { e.stopPropagation(); onDeleteItem(orderId, item.id) } : null}
             />
             {openItemId === item.id && (
               <div onClick={e => e.stopPropagation()} style={{
                 marginTop: 6, background: T.bg, border: `1px solid ${T.border}`,
-                borderRadius: T.rSection, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 6,
+                borderRadius: T.rSection, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
               }}>
-                <span style={{ fontFamily: T.syne, fontSize: 11, color: T.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ fontFamily: T.syne, fontSize: 11, color: T.textSecondary, flex: 1, minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.item_name}
                 </span>
                 {(['pending', 'preparing', 'ready']).map(s => (
@@ -300,7 +483,7 @@ function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceG
   )
 }
 
-function ItemRow({ item, isOpen, onRowClick }) {
+function ItemRow({ item, isOpen, onRowClick, onDelete }) {
   const dot = item.status === 'pending' ? T.textMuted : item.status === 'preparing' ? T.yellow : T.green
   return (
     <div onClick={onRowClick} style={{
@@ -317,142 +500,13 @@ function ItemRow({ item, isOpen, onRowClick }) {
       <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, whiteSpace: 'nowrap', flexShrink: 0 }}>
         {money(item.unit_price * item.quantity)}
       </span>
-    </div>
-  )
-}
-
-// ─── TAB SALA ─────────────────────────────────────────────────────────────────
-
-function SalaTab({ orders, onClose, onAddItem }) {
-  const inCucina = orders.filter(o => (o.order_items || []).some(i => i.status !== 'ready'))
-  const pronti = orders.filter(o => {
-    const items = o.order_items || []
-    return items.length > 0 && items.every(i => i.status === 'ready')
-  })
-
-  if (orders.length === 0) {
-    return (
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 48, textAlign: 'center' }}>
-        <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary, margin: 0 }}>
-          Nessun ordine aperto al momento.
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      {/* Sezione In cucina */}
-      {inCucina.length > 0 && (
-        <div style={{ marginBottom: 28 }}>
-          <SectionDivider label="In cucina" />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-            {inCucina.map(o => <OrderCardSala key={o.id} order={o} />)}
-          </div>
-        </div>
+      {onDelete && (
+        <button onClick={onDelete} title="Rimuovi voce" style={{
+          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
+          fontSize: 14, color: T.textMuted, flexShrink: 0, lineHeight: 1,
+          borderRadius: T.rBtn, transition: 'color 0.12s',
+        }}>🗑</button>
       )}
-
-      {/* Sezione Pronti */}
-      {pronti.length > 0 && (
-        <div>
-          <SectionDivider label="Pronti per il conto" />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-            {pronti.map(o => (
-              <OrderCardPronti key={o.id} order={o} onClose={onClose} onAddItem={onAddItem} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {pronti.length === 0 && inCucina.length > 0 && (
-        <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textMuted, textAlign: 'center', marginTop: 24 }}>
-          Nessun ordine ancora pronto per il conto.
-        </p>
-      )}
-    </div>
-  )
-}
-
-function SectionDivider({ label }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-      <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, whiteSpace: 'nowrap' }}>
-        {label}
-      </span>
-      <div style={{ flex: 1, height: 1, background: T.border }} />
-    </div>
-  )
-}
-
-function OrderCardSala({ order }) {
-  const items = order.order_items || []
-  return (
-    <div style={{
-      background: T.bg, border: `1px solid ${T.border}`,
-      borderRadius: T.rCard, padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 17, color: T.text }}>#{order.order_number ?? '—'}</span>
-          <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, color: T.text }}>{order.customer_name}</span>
-          {order.table_number && <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>· Tav. {order.table_number}</span>}
-        </div>
-        <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textSecondary, whiteSpace: 'nowrap' }}>{money(order.total)}</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {items.map(item => {
-          const dot = item.status === 'pending' ? T.textMuted : item.status === 'preparing' ? T.yellow : T.green
-          return (
-            <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0, display: 'block' }} />
-              <span style={{ fontFamily: T.syne, fontSize: 12, color: T.text }}>
-                <span style={{ fontFamily: T.mono, color: T.primary }}>{item.quantity}×</span> {item.item_name}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function OrderCardPronti({ order, onClose, onAddItem }) {
-  const items = order.order_items || []
-  return (
-    <div style={{
-      background: T.bg, border: `1px solid ${T.green}`,
-      borderRadius: T.rCard, padding: 18, display: 'flex', flexDirection: 'column', gap: 12,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.text }}>#{order.order_number ?? '—'}</span>
-            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{order.customer_name}</span>
-          </div>
-          {order.table_number && <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>}
-        </div>
-        <span style={{ fontFamily: T.mono, fontWeight: 700, fontSize: 22, color: T.green, whiteSpace: 'nowrap' }}>
-          {money(order.total)}
-        </span>
-      </div>
-      <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {items.map(item => (
-          <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontFamily: T.syne, fontSize: 13, color: T.text }}>
-              <span style={{ fontFamily: T.mono, fontWeight: 500, color: T.primary }}>{item.quantity}×</span> {item.item_name}
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{money(item.unit_price * item.quantity)}</span>
-          </div>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 8, borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
-        <Button variant="ghost" onClick={() => onAddItem(order.id)} style={{ fontSize: 12, padding: '7px 12px', whiteSpace: 'nowrap' }}>
-          + Aggiungi voce
-        </Button>
-        <Button variant="danger" onClick={() => onClose(order)} style={{ flex: 1, textAlign: 'center' }}>
-          Chiudi conto
-        </Button>
-      </div>
     </div>
   )
 }
@@ -479,7 +533,7 @@ function AddItemModal({ orderId, restaurantId, onDone, onClose }) {
     })()
   }, [restaurantId])
 
-  async function confirm() {
+  async function confirmAdd() {
     if (!selected) return
     setBusy(true)
     await supabase.rpc('add_to_order', { p_order_id: orderId, p_items: [{ menu_item_id: selected.id, quantity: qty }] })
@@ -522,7 +576,7 @@ function AddItemModal({ orderId, restaurantId, onDone, onClose }) {
                   <span style={{ fontFamily: T.mono, fontSize: 14, minWidth: 28, textAlign: 'center' }}>{qty}</span>
                   <button onClick={() => setQty(q => q + 1)} style={{ width: 32, height: 32, border: 'none', background: T.surface, cursor: 'pointer', fontSize: 16, color: T.text, fontFamily: T.syne }}>+</button>
                 </div>
-                <Button variant="primary" onClick={confirm} style={{ opacity: busy ? 0.6 : 1, padding: '9px 16px' }}>
+                <Button variant="primary" onClick={confirmAdd} style={{ opacity: busy ? 0.6 : 1, padding: '9px 16px' }}>
                   {busy ? '…' : 'Aggiungi'}
                 </Button>
               </div>
