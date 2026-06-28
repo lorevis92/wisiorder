@@ -1,43 +1,28 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
-import { T } from '../../lib/theme'
+import { T, STATUS_LABEL, STATUS_COLOR } from '../../lib/theme'
 import { money, relTime } from '../../lib/format'
 import { Button, Badge, Spinner } from '../../components/UI'
 import { initAudio, beep, vibrate } from '../../lib/sound'
-
-const hasActiveItems = (order) =>
-  (order.order_items || []).some(i => i.status !== 'ready')
-
-const isAllReady = (order) =>
-  (order.order_items || []).length > 0 &&
-  (order.order_items || []).every(i => i.status === 'ready')
 
 export default function Dashboard() {
   const { restaurant } = useAuth()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState(null)
   const [soundOn, setSoundOn] = useState(true)
   const soundRef = useRef(true)
   soundRef.current = soundOn
 
   const load = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .eq('restaurant_id', restaurant.id)
-        .is('closed_at', null)
-        .order('created_at', { ascending: true })
-      if (error) throw error
-      setOrders(data || [])
-      setLoadError(null)
-    } catch (e) {
-      setLoadError(e.message || 'Errore nel caricamento degli ordini.')
-    } finally {
-      setLoading(false)
-    }
+    const { data } = await supabase
+      .from('orders')
+      .select('*, order_items(*)')
+      .eq('restaurant_id', restaurant.id)
+      .is('closed_at', null)
+      .order('created_at', { ascending: true })
+    setOrders(data || [])
+    setLoading(false)
   }, [restaurant.id])
 
   useEffect(() => { load() }, [load])
@@ -76,13 +61,13 @@ export default function Dashboard() {
 
   function patchItem(orderId, itemId, status) {
     setOrders(prev => prev.map(o => o.id !== orderId ? o : {
-      ...o, order_items: (o.order_items || []).map(i => i.id === itemId ? { ...i, status } : i),
+      ...o, order_items: o.order_items.map(i => i.id === itemId ? { ...i, status } : i),
     }))
   }
 
-  function patchItems(orderId, ids, toStatus) {
+  function patchItems(orderId, ids, status) {
     setOrders(prev => prev.map(o => o.id !== orderId ? o : {
-      ...o, order_items: (o.order_items || []).map(i => ids.includes(i.id) ? { ...i, status: toStatus } : i),
+      ...o, order_items: o.order_items.map(i => ids.includes(i.id) ? { ...i, status } : i),
     }))
   }
 
@@ -91,14 +76,14 @@ export default function Dashboard() {
     await supabase.from('order_items').update({ status }).eq('id', itemId)
   }
 
-  async function advanceGroup(orderId, ids, toStatus) {
-    patchItems(orderId, ids, toStatus)
-    await supabase.from('order_items').update({ status: toStatus }).in('id', ids)
+  async function advanceGroup(orderId, ids) {
+    patchItems(orderId, ids, 'ready')
+    await supabase.from('order_items').update({ status: 'ready' }).in('id', ids)
   }
 
   async function closeOrder(order) {
-    const hasNotReady = (order.order_items || []).some(i => i.status !== 'ready')
-    if (hasNotReady && !confirm('Ci sono voci non ancora pronte. Chiudi comunque il conto?')) return
+    const hasQueued = (order.order_items || []).some(i => i.status === 'queued')
+    if (hasQueued && !confirm('Ci sono voci non ancora pronte. Chiudi comunque il conto?')) return
     setOrders(prev => prev.filter(o => o.id !== order.id))
     await supabase.from('orders').update({ closed_at: new Date().toISOString() }).eq('id', order.id)
   }
@@ -109,27 +94,17 @@ export default function Dashboard() {
 
   if (loading) return <Spinner label="Carico ordini…" />
 
-  if (loadError) return (
-    <div style={{ maxWidth: 520, margin: '60px auto', padding: 24, textAlign: 'center' }}>
-      <p style={{ fontFamily: T.syne, fontSize: 15, color: T.primary, marginBottom: 16 }}>{loadError}</p>
-      <Button variant="primary" onClick={load}>Riprova</Button>
-    </div>
-  )
-
-  const inCorso = orders.filter(hasActiveItems)
-  const daPagare = orders.filter(isAllReady)
-
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
         <div>
           <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
-            Ordini
+            Ordini in corso
           </h1>
           <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textSecondary, margin: '4px 0 0' }}>
             {orders.length === 0
               ? 'Nessun ordine attivo.'
-              : `${inCorso.length} in corso · ${daPagare.length} da pagare · tempo reale`}
+              : `${orders.length} ${orders.length === 1 ? 'ordine attivo' : 'ordini attivi'} · aggiornamento in tempo reale`}
           </p>
         </div>
         <Button variant={soundOn ? 'ghost' : 'primary'} onClick={() => soundOn ? setSoundOn(false) : enableSound()}>
@@ -144,41 +119,17 @@ export default function Dashboard() {
           </p>
         </div>
       ) : (
-        <>
-          <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.8, color: T.textSecondary, margin: '0 0 12px' }}>
-            Ordini in corso
-          </h2>
-          {inCorso.length === 0 ? (
-            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 28, textAlign: 'center' }}>
-              <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textMuted, margin: 0 }}>Tutti gli ordini sono pronti.</p>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start', marginBottom: 32 }}>
-              {inCorso.map(o => (
-                <OrderCard
-                  key={o.id}
-                  order={o}
-                  onSetItemStatus={setItemStatus}
-                  onAdvanceGroup={advanceGroup}
-                  onClose={closeOrder}
-                />
-              ))}
-            </div>
-          )}
-
-          {daPagare.length > 0 && (
-            <>
-              <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.8, color: T.green, margin: '0 0 12px' }}>
-                Da pagare
-              </h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12, alignItems: 'start' }}>
-                {daPagare.map(o => (
-                  <OrderCardPronti key={o.id} order={o} onClose={closeOrder} />
-                ))}
-              </div>
-            </>
-          )}
-        </>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
+          {orders.map(o => (
+            <OrderCard
+              key={o.id}
+              order={o}
+              onSetItemStatus={setItemStatus}
+              onAdvanceGroup={advanceGroup}
+              onClose={closeOrder}
+            />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -186,11 +137,12 @@ export default function Dashboard() {
 
 function OrderCard({ order, onSetItemStatus, onAdvanceGroup, onClose }) {
   const items = order.order_items || []
+  const allReady = items.length > 0 && items.every(i => i.status === 'ready')
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
 
   return (
     <div style={{
-      background: T.bg, border: `1px solid ${T.border}`,
+      background: T.bg, border: `1px solid ${allReady ? T.green : T.border}`,
       borderRadius: T.rCard, padding: 18, animation: 'wo-slidein 0.25s ease',
       display: 'flex', flexDirection: 'column', gap: 12,
     }}>
@@ -254,46 +206,10 @@ function OrderCard({ order, onSetItemStatus, onAdvanceGroup, onClose }) {
   )
 }
 
-function OrderCardPronti({ order, onClose }) {
-  const items = order.order_items || []
-  return (
-    <div style={{
-      background: T.bg, border: `2px solid ${T.green}`,
-      borderRadius: T.rCard, padding: '14px 16px',
-      display: 'flex', flexDirection: 'column', gap: 10,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 18, color: T.text }}>#{order.order_number ?? '—'}</span>
-            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, color: T.text }}>{order.customer_name}</span>
-          </div>
-          {order.table_number && (
-            <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary }}>Tavolo {order.table_number}</span>
-          )}
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.green }}>{money(order.total)}</div>
-          <div style={{ fontFamily: T.syne, fontSize: 11, color: T.green, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            Tutto pronto
-          </div>
-        </div>
-      </div>
-      <div style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>
-        {items.length} {items.length === 1 ? 'voce' : 'voci'}
-      </div>
-      <Button variant="danger" onClick={() => onClose(order)} style={{ width: '100%', textAlign: 'center' }}>
-        Chiudi conto
-      </Button>
-    </div>
-  )
-}
-
 function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceGroup }) {
   const [openItemId, setOpenItemId] = useState(null)
-
-  const pendingIds = catItems.filter(i => i.status === 'pending').map(i => i.id)
-  const preparingIds = catItems.filter(i => i.status === 'preparing').map(i => i.id)
+  const hasQueued = catItems.some(i => i.status === 'queued')
+  const allReady = catItems.every(i => i.status === 'ready')
 
   useEffect(() => {
     if (!openItemId) return
@@ -308,30 +224,15 @@ function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceG
         <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary }}>
           {catName}
         </span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {pendingIds.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onAdvanceGroup(orderId, pendingIds, 'preparing')}
-              style={{
-                fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
-                border: `1px solid ${T.yellow}`, borderRadius: T.rBtn, padding: '4px 10px', cursor: 'pointer',
-                background: T.yellow, color: '#fff',
-              }}
-            >In lavorazione</button>
-          )}
-          {preparingIds.length > 0 && pendingIds.length === 0 && (
-            <button
-              type="button"
-              onClick={() => onAdvanceGroup(orderId, preparingIds, 'ready')}
-              style={{
-                fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
-                border: `1px solid ${T.green}`, borderRadius: T.rBtn, padding: '4px 10px', cursor: 'pointer',
-                background: T.green, color: '#fff',
-              }}
-            >Pronti</button>
-          )}
-        </div>
+        {!allReady && hasQueued && (
+          <Button
+            variant="primary"
+            onClick={() => onAdvanceGroup(orderId, catItems.filter(i => i.status === 'queued').map(i => i.id))}
+            style={{ padding: '4px 10px', fontSize: 11 }}
+          >
+            Pronti
+          </Button>
+        )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {catItems.map(item => (
@@ -347,33 +248,32 @@ function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceG
                 style={{
                   marginTop: 6, background: T.bg, border: `1px solid ${T.border}`,
                   borderRadius: T.rSection, padding: '8px 10px',
-                  display: 'flex', alignItems: 'center', gap: 6,
+                  display: 'flex', alignItems: 'center', gap: 8,
                 }}
               >
                 <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.item_name}
                 </span>
-                {[
-                  { s: 'pending', label: 'In attesa', color: T.textMuted },
-                  { s: 'preparing', label: 'Lavorazione', color: T.yellow },
-                  { s: 'ready', label: 'Pronto', color: T.green },
-                ].map(({ s, label, color }) => {
-                  const isActive = item.status === s
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => { onSetItemStatus(orderId, item.id, s); setOpenItemId(null) }}
-                      style={{
-                        fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
-                        border: `1px solid ${isActive ? color : T.border}`,
-                        borderRadius: T.rBtn, padding: '4px 8px', cursor: 'pointer', flexShrink: 0,
-                        background: isActive ? color : 'transparent',
-                        color: isActive ? (s === 'pending' ? T.text : '#fff') : T.textMuted,
-                      }}
-                    >{label}</button>
-                  )
-                })}
+                <button
+                  onClick={() => { onSetItemStatus(orderId, item.id, 'queued'); setOpenItemId(null) }}
+                  style={{
+                    fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
+                    border: `1px solid ${item.status === 'queued' ? T.yellow : T.border}`,
+                    borderRadius: T.rBtn, padding: '5px 10px', cursor: 'pointer', flexShrink: 0,
+                    background: item.status === 'queued' ? T.yellow : 'transparent',
+                    color: item.status === 'queued' ? '#fff' : T.textMuted,
+                  }}
+                >In coda</button>
+                <button
+                  onClick={() => { onSetItemStatus(orderId, item.id, 'ready'); setOpenItemId(null) }}
+                  style={{
+                    fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
+                    border: `1px solid ${item.status === 'ready' ? T.green : T.border}`,
+                    borderRadius: T.rBtn, padding: '5px 10px', cursor: 'pointer', flexShrink: 0,
+                    background: item.status === 'ready' ? T.green : 'transparent',
+                    color: item.status === 'ready' ? '#fff' : T.textMuted,
+                  }}
+                >Pronto</button>
               </div>
             )}
           </div>
@@ -384,7 +284,7 @@ function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceG
 }
 
 function ItemRow({ item, isOpen, onRowClick }) {
-  const dotColor = item.status === 'ready' ? T.green : item.status === 'preparing' ? T.yellow : T.textMuted
+  const dotColor = item.status === 'queued' ? T.yellow : T.green
   return (
     <div
       onClick={onRowClick}
