@@ -107,11 +107,17 @@ export default function OrderStatus() {
   const isClosed = !!order.closed_at
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
 
+  const anyReady = items.some(i => i.status === 'ready')
+  const anyPreparing = items.some(i => i.status === 'preparing')
   const bigStatus = isClosed
     ? { text: 'Buon appetito!', sub: 'Il tuo ordine è stato completato.', green: true }
     : allItemsReady
       ? { text: 'Tutto pronto! 🎉', sub: 'Puoi ritirare il tuo ordine.', green: true }
-      : { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', green: false }
+      : anyReady
+        ? { text: 'Alcuni piatti sono pronti!', sub: 'Controlla qui sotto quali portate sono pronte.', green: false }
+        : anyPreparing
+          ? { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', green: false }
+          : { text: 'Ordine ricevuto', sub: 'Lo abbiamo ricevuto, iniziamo a prepararlo a breve.', green: false }
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface }}>
@@ -141,15 +147,18 @@ export default function OrderStatus() {
             </h2>
             {Object.entries(catGroups).map(([cat, catItems], idx, arr) => {
               const allReady = catItems.every(i => i.status === 'ready')
+              const anyPreparing = catItems.some(i => i.status === 'preparing')
+              const dotColor = allReady ? T.green : anyPreparing ? T.yellow : T.textMuted
+              const label = allReady ? '✓ Pronto' : anyPreparing ? 'In preparazione' : 'In attesa'
               const isLast = idx === arr.length - 1
               return (
                 <div key={cat} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: isLast ? 'none' : `1px solid ${T.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: allReady ? T.green : T.yellow, flexShrink: 0 }} />
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
                     <span style={{ fontFamily: T.syne, fontWeight: 600, fontSize: 14, color: T.text }}>{cat}</span>
                   </div>
-                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: allReady ? T.green : T.yellow, whiteSpace: 'nowrap' }}>
-                    {allReady ? '✓ Pronto' : 'In preparazione'}
+                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: dotColor, whiteSpace: 'nowrap' }}>
+                    {label}
                   </span>
                 </div>
               )

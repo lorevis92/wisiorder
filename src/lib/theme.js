@@ -22,17 +22,14 @@ export const T = {
   rBtn: 3,
 }
 
-// Stato ordine: ordine + etichette + colori
-export const ORDER_FLOW = ['received', 'preparing', 'ready']
+export const ORDER_FLOW = ['pending', 'preparing', 'ready']
 export const STATUS_LABEL = {
-  received: 'Ricevuto',
+  pending: 'In attesa',
   preparing: 'In preparazione',
   ready: 'Pronto',
-  completed: 'Consegnato',
 }
 export const STATUS_COLOR = {
-  received: T.yellow,
-  preparing: T.primary,
+  pending: T.textMuted,
+  preparing: T.yellow,
   ready: T.green,
-  completed: T.textMuted,
 }
