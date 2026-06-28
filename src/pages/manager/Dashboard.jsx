@@ -27,16 +27,12 @@ export default function Dashboard() {
 
   useEffect(() => { load() }, [load])
 
-  // Realtime: canale ordini + canale voci
   useEffect(() => {
     const chOrders = supabase
       .channel(`orders-${restaurant.id}`)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurant.id}` },
-        () => {
-          if (soundRef.current) { beep({ freq: 880, repeat: 2 }); vibrate() }
-          load()
-        })
+        () => { if (soundRef.current) { beep({ freq: 880, repeat: 2 }); vibrate() }; load() })
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurant.id}` },
         () => load())
@@ -46,10 +42,7 @@ export default function Dashboard() {
       .channel(`order-items-${restaurant.id}`)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'order_items', filter: `restaurant_id=eq.${restaurant.id}` },
-        (payload) => {
-          if (soundRef.current && payload.new?.round > 1) { beep({ freq: 660, repeat: 3 }); vibrate() }
-          load()
-        })
+        (payload) => { if (soundRef.current && payload.new?.round > 1) { beep({ freq: 660, repeat: 3 }); vibrate() }; load() })
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'order_items', filter: `restaurant_id=eq.${restaurant.id}` },
         () => load())
@@ -58,13 +51,9 @@ export default function Dashboard() {
         () => load())
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(chOrders)
-      supabase.removeChannel(chItems)
-    }
+    return () => { supabase.removeChannel(chOrders); supabase.removeChannel(chItems) }
   }, [restaurant.id, load])
 
-  // Aggiorna relTime ogni 30s
   useEffect(() => {
     const t = setInterval(() => setOrders(o => [...o]), 30000)
     return () => clearInterval(t)
@@ -72,33 +61,29 @@ export default function Dashboard() {
 
   function patchItem(orderId, itemId, status) {
     setOrders(prev => prev.map(o => o.id !== orderId ? o : {
-      ...o,
-      order_items: o.order_items.map(i => i.id === itemId ? { ...i, status } : i),
+      ...o, order_items: o.order_items.map(i => i.id === itemId ? { ...i, status } : i),
     }))
   }
 
   function patchItems(orderId, ids, status) {
     setOrders(prev => prev.map(o => o.id !== orderId ? o : {
-      ...o,
-      order_items: o.order_items.map(i => ids.includes(i.id) ? { ...i, status } : i),
+      ...o, order_items: o.order_items.map(i => ids.includes(i.id) ? { ...i, status } : i),
     }))
   }
 
-  async function advanceItem(orderId, itemId, currentStatus) {
-    const next = { queued: 'ready', ready: 'delivered' }[currentStatus]
-    if (!next) return
-    patchItem(orderId, itemId, next)
-    await supabase.from('order_items').update({ status: next }).eq('id', itemId)
+  async function setItemStatus(orderId, itemId, status) {
+    patchItem(orderId, itemId, status)
+    await supabase.from('order_items').update({ status }).eq('id', itemId)
   }
 
-  async function advanceGroup(orderId, ids, targetStatus) {
-    patchItems(orderId, ids, targetStatus)
-    await supabase.from('order_items').update({ status: targetStatus }).in('id', ids)
+  async function advanceGroup(orderId, ids) {
+    patchItems(orderId, ids, 'ready')
+    await supabase.from('order_items').update({ status: 'ready' }).in('id', ids)
   }
 
   async function closeOrder(order) {
-    const hasOpen = (order.order_items || []).some(i => i.status !== 'delivered')
-    if (hasOpen && !confirm('Ci sono voci non ancora consegnate. Chiudi comunque il conto?')) return
+    const hasQueued = (order.order_items || []).some(i => i.status === 'queued')
+    if (hasQueued && !confirm('Ci sono voci non ancora pronte. Chiudi comunque il conto?')) return
     setOrders(prev => prev.filter(o => o.id !== order.id))
     await supabase.from('orders').update({ closed_at: new Date().toISOString() }).eq('id', order.id)
   }
@@ -111,15 +96,9 @@ export default function Dashboard() {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexWrap: 'wrap', gap: 12, marginBottom: 20,
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
         <div>
-          <h1 style={{
-            fontFamily: T.syne, fontWeight: 800, fontSize: 22,
-            textTransform: 'uppercase', letterSpacing: 0.5, margin: 0,
-          }}>
+          <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
             Ordini in corso
           </h1>
           <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textSecondary, margin: '4px 0 0' }}>
@@ -128,34 +107,24 @@ export default function Dashboard() {
               : `${orders.length} ${orders.length === 1 ? 'ordine attivo' : 'ordini attivi'} · aggiornamento in tempo reale`}
           </p>
         </div>
-        <Button
-          variant={soundOn ? 'ghost' : 'primary'}
-          onClick={() => soundOn ? setSoundOn(false) : enableSound()}
-        >
+        <Button variant={soundOn ? 'ghost' : 'primary'} onClick={() => soundOn ? setSoundOn(false) : enableSound()}>
           {soundOn ? '🔔 Suono attivo' : '🔕 Attiva suono'}
         </Button>
       </div>
 
       {orders.length === 0 ? (
-        <div style={{
-          background: T.surface, border: `1px solid ${T.border}`,
-          borderRadius: T.rCard, padding: 48, textAlign: 'center',
-        }}>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 48, textAlign: 'center' }}>
           <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary, margin: 0 }}>
             Quando un cliente invia un ordine comparirà qui, con un avviso sonoro.
           </p>
         </div>
       ) : (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-          gap: 16, alignItems: 'start',
-        }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
           {orders.map(o => (
             <OrderCard
               key={o.id}
               order={o}
-              onAdvanceItem={advanceItem}
+              onSetItemStatus={setItemStatus}
               onAdvanceGroup={advanceGroup}
               onClose={closeOrder}
             />
@@ -166,41 +135,26 @@ export default function Dashboard() {
   )
 }
 
-function OrderCard({ order, onAdvanceItem, onAdvanceGroup, onClose }) {
+function OrderCard({ order, onSetItemStatus, onAdvanceGroup, onClose }) {
   const items = order.order_items || []
-  const allDelivered = items.length > 0 && items.every(i => i.status === 'delivered')
-
+  const allReady = items.length > 0 && items.every(i => i.status === 'ready')
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
 
   return (
     <div style={{
-      background: T.bg,
-      border: `1px solid ${allDelivered ? T.green : T.border}`,
-      borderRadius: T.rCard,
-      padding: 18,
-      animation: 'wo-slidein 0.25s ease',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 12,
+      background: T.bg, border: `1px solid ${allReady ? T.green : T.border}`,
+      borderRadius: T.rCard, padding: 18, animation: 'wo-slidein 0.25s ease',
+      display: 'flex', flexDirection: 'column', gap: 12,
     }}>
-      {/* Header ordine */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.text }}>
-              #{order.order_number ?? '—'}
-            </span>
-            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>
-              {order.customer_name}
-            </span>
+            <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.text }}>#{order.order_number ?? '—'}</span>
+            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{order.customer_name}</span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-            {order.table_number && (
-              <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>
-            )}
-            <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>
-              {relTime(order.created_at)}
-            </span>
+            {order.table_number && <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>}
+            <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>{relTime(order.created_at)}</span>
           </div>
         </div>
         <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 15, color: T.text, whiteSpace: 'nowrap' }}>
@@ -208,7 +162,6 @@ function OrderCard({ order, onAdvanceItem, onAdvanceGroup, onClose }) {
         </span>
       </div>
 
-      {/* Voci raggruppate per giro → categoria */}
       <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
         {rounds.map(round => {
           const roundItems = items.filter(i => (i.round ?? 1) === round)
@@ -219,18 +172,12 @@ function OrderCard({ order, onAdvanceItem, onAdvanceGroup, onClose }) {
             if (!catMap[cat]) { catMap[cat] = []; catOrder.push(cat) }
             catMap[cat].push(item)
           }
-          const sortedCats = [
-            ...catOrder.filter(c => c !== 'Altro'),
-            ...(catOrder.includes('Altro') ? ['Altro'] : []),
-          ]
-
+          const sortedCats = [...catOrder.filter(c => c !== 'Altro'), ...(catOrder.includes('Altro') ? ['Altro'] : [])]
           return (
             <div key={round}>
               {round > 1 && (
                 <div style={{ marginBottom: 8 }}>
-                  <Badge color={T.primary} bg={T.primaryLight}>
-                    ➕ {round}° GIRO
-                  </Badge>
+                  <Badge color={T.primary} bg={T.primaryLight}>➕ {round}° GIRO</Badge>
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -240,7 +187,7 @@ function OrderCard({ order, onAdvanceItem, onAdvanceGroup, onClose }) {
                     catName={cat}
                     catItems={catMap[cat]}
                     orderId={order.id}
-                    onAdvanceItem={onAdvanceItem}
+                    onSetItemStatus={onSetItemStatus}
                     onAdvanceGroup={onAdvanceGroup}
                   />
                 ))}
@@ -250,13 +197,8 @@ function OrderCard({ order, onAdvanceItem, onAdvanceGroup, onClose }) {
         })}
       </div>
 
-      {/* Footer: chiudi conto */}
       <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
-        <Button
-          variant="danger"
-          onClick={() => onClose(order)}
-          style={{ width: '100%', textAlign: 'center' }}
-        >
+        <Button variant="danger" onClick={() => onClose(order)} style={{ width: '100%', textAlign: 'center' }}>
           Chiudi conto
         </Button>
       </div>
@@ -264,95 +206,103 @@ function OrderCard({ order, onAdvanceItem, onAdvanceGroup, onClose }) {
   )
 }
 
-function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onAdvanceGroup }) {
+function CategoryGroup({ catName, catItems, orderId, onSetItemStatus, onAdvanceGroup }) {
+  const [openItemId, setOpenItemId] = useState(null)
   const hasQueued = catItems.some(i => i.status === 'queued')
-  const hasReady = catItems.some(i => i.status === 'ready')
-  const allDelivered = catItems.every(i => i.status === 'delivered')
+  const allReady = catItems.every(i => i.status === 'ready')
 
-  function handleGroup() {
-    if (hasQueued) {
-      onAdvanceGroup(orderId, catItems.filter(i => i.status === 'queued').map(i => i.id), 'ready')
-    } else if (hasReady) {
-      onAdvanceGroup(orderId, catItems.filter(i => i.status === 'ready').map(i => i.id), 'delivered')
-    }
-  }
+  useEffect(() => {
+    if (!openItemId) return
+    function handler() { setOpenItemId(null) }
+    document.addEventListener('click', handler)
+    return () => document.removeEventListener('click', handler)
+  }, [openItemId])
 
   return (
     <div style={{ background: T.surface, borderRadius: T.rSection, padding: '10px 12px' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 8, gap: 8,
-      }}>
-        <span style={{
-          fontFamily: T.syne, fontWeight: 700, fontSize: 11,
-          textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary,
-        }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
+        <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary }}>
           {catName}
         </span>
-        {!allDelivered && (
+        {!allReady && hasQueued && (
           <Button
-            variant={hasQueued ? 'primary' : 'success'}
-            onClick={handleGroup}
+            variant="primary"
+            onClick={() => onAdvanceGroup(orderId, catItems.filter(i => i.status === 'queued').map(i => i.id))}
             style={{ padding: '4px 10px', fontSize: 11 }}
           >
-            {hasQueued ? 'Pronti' : 'Consegnati'}
+            Pronti
           </Button>
         )}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {catItems.map(item => (
-          <ItemRow
-            key={item.id}
-            item={item}
-            orderId={orderId}
-            onAdvance={onAdvanceItem}
-          />
+          <div key={item.id}>
+            <ItemRow
+              item={item}
+              isOpen={openItemId === item.id}
+              onRowClick={(e) => { e.stopPropagation(); setOpenItemId(openItemId === item.id ? null : item.id) }}
+            />
+            {openItemId === item.id && (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  marginTop: 6, background: T.bg, border: `1px solid ${T.border}`,
+                  borderRadius: T.rSection, padding: '8px 10px',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                }}
+              >
+                <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {item.item_name}
+                </span>
+                <button
+                  onClick={() => { onSetItemStatus(orderId, item.id, 'queued'); setOpenItemId(null) }}
+                  style={{
+                    fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
+                    border: `1px solid ${item.status === 'queued' ? T.yellow : T.border}`,
+                    borderRadius: T.rBtn, padding: '5px 10px', cursor: 'pointer', flexShrink: 0,
+                    background: item.status === 'queued' ? T.yellow : 'transparent',
+                    color: item.status === 'queued' ? '#fff' : T.textMuted,
+                  }}
+                >In coda</button>
+                <button
+                  onClick={() => { onSetItemStatus(orderId, item.id, 'ready'); setOpenItemId(null) }}
+                  style={{
+                    fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
+                    border: `1px solid ${item.status === 'ready' ? T.green : T.border}`,
+                    borderRadius: T.rBtn, padding: '5px 10px', cursor: 'pointer', flexShrink: 0,
+                    background: item.status === 'ready' ? T.green : 'transparent',
+                    color: item.status === 'ready' ? '#fff' : T.textMuted,
+                  }}
+                >Pronto</button>
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </div>
   )
 }
 
-function ItemRow({ item, orderId, onAdvance }) {
-  const isDelivered = item.status === 'delivered'
-  const dotColor = { queued: T.yellow, ready: T.green, delivered: T.textMuted }[item.status] ?? T.textMuted
-
+function ItemRow({ item, isOpen, onRowClick }) {
+  const dotColor = item.status === 'queued' ? T.yellow : T.green
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {/* Controllo stato voce */}
-      {isDelivered ? (
-        <span style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>✓</span>
-        </span>
-      ) : (
-        <button
-          onClick={() => onAdvance(orderId, item.id, item.status)}
-          title={item.status === 'queued' ? 'Segna pronto' : 'Segna consegnato'}
-          style={{
-            width: 20, height: 20, borderRadius: '50%',
-            border: `2px solid ${dotColor}`, background: 'transparent',
-            cursor: 'pointer', padding: 0, flexShrink: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, display: 'block' }} />
-        </button>
-      )}
-
-      {/* Nome voce */}
-      <span style={{ flex: 1, minWidth: 0, fontFamily: T.syne, fontSize: 13, color: isDelivered ? T.textMuted : T.text, textDecoration: isDelivered ? 'line-through' : 'none' }}>
-        <span style={{ fontFamily: T.mono, fontWeight: 500, color: isDelivered ? T.textMuted : T.primary }}>
-          {item.quantity}×
-        </span>{' '}
+    <div
+      onClick={onRowClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+        borderRadius: T.rSection, padding: '3px 2px',
+        background: isOpen ? T.surfaceAlt : 'transparent',
+        transition: 'background 0.12s',
+      }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'block' }} />
+      <span style={{ flex: 1, minWidth: 0, fontFamily: T.syne, fontSize: 13, color: T.text }}>
+        <span style={{ fontFamily: T.mono, fontWeight: 500, color: T.primary }}>{item.quantity}×</span>{' '}
         {item.item_name}
         {item.note && (
-          <span style={{ display: 'block', fontSize: 11, color: T.textSecondary, fontStyle: 'italic', marginTop: 1 }}>
-            "{item.note}"
-          </span>
+          <span style={{ display: 'block', fontSize: 11, color: T.textSecondary, fontStyle: 'italic', marginTop: 1 }}>"{item.note}"</span>
         )}
       </span>
-
-      {/* Prezzo */}
       <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, whiteSpace: 'nowrap', flexShrink: 0 }}>
         {money(item.unit_price * item.quantity)}
       </span>

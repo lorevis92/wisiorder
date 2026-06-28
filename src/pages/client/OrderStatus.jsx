@@ -1,48 +1,96 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { T, ORDER_FLOW, STATUS_LABEL } from '../../lib/theme'
+import { T } from '../../lib/theme'
 import { money } from '../../lib/format'
 import { Spinner } from '../../components/UI'
 import { initAudio, beep, vibrate } from '../../lib/sound'
 
+function groupByCategory(items) {
+  const map = {}
+  const order = []
+  for (const item of items) {
+    const cat = item.category_name || 'Altro'
+    if (!map[cat]) { map[cat] = []; order.push(cat) }
+    map[cat].push(item)
+  }
+  const result = {}
+  for (const cat of order.filter(c => c !== 'Altro')) result[cat] = map[cat]
+  if (map['Altro']) result['Altro'] = map['Altro']
+  return result
+}
+
 export default function OrderStatus() {
   const { orderId } = useParams()
+  const nav = useNavigate()
   const [order, setOrder] = useState(null)
   const [restaurant, setRestaurant] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const prevStatus = useRef(null)
-  const notifiedReady = useRef(false)
+  const initialLoadDone = useRef(false)
+  const prevGroupReady = useRef({})
+
+  // Unlock AudioContext on first user interaction (best-effort)
+  useEffect(() => {
+    function unlock() { initAudio(); document.removeEventListener('click', unlock); document.removeEventListener('touchstart', unlock) }
+    document.addEventListener('click', unlock)
+    document.addEventListener('touchstart', unlock)
+    return () => { document.removeEventListener('click', unlock); document.removeEventListener('touchstart', unlock) }
+  }, [])
 
   async function fetchOrder() {
     const { data } = await supabase
       .from('orders')
-      .select('*, order_items(*), restaurants(name, logo_url, primary_color)')
+      .select('*, order_items(*), restaurants(name, logo_url, primary_color, slug)')
       .eq('id', orderId)
       .maybeSingle()
     if (!data) { setNotFound(true); setLoading(false); return }
+
+    const items = data.order_items || []
+    const groups = groupByCategory(items)
+
+    if (initialLoadDone.current) {
+      let anyNewReady = false
+      for (const [cat, catItems] of Object.entries(groups)) {
+        const allReady = catItems.every(i => i.status === 'ready')
+        if (allReady && !prevGroupReady.current[cat]) anyNewReady = true
+      }
+      if (anyNewReady) { beep({ freq: 660, repeat: 3 }); vibrate([200, 100, 200]) }
+    }
+
+    const newPrev = {}
+    for (const [cat, catItems] of Object.entries(groups)) {
+      newPrev[cat] = catItems.every(i => i.status === 'ready')
+    }
+    prevGroupReady.current = newPrev
+    initialLoadDone.current = true
+
     setRestaurant(data.restaurants)
     setOrder(data)
     setLoading(false)
-    // Notifica passaggio a "pronto"
-    if (data.status === 'ready' && prevStatus.current && prevStatus.current !== 'ready' && !notifiedReady.current) {
-      notifiedReady.current = true
-      beep({ freq: 660, repeat: 3 }); vibrate([200, 100, 200])
-    }
-    prevStatus.current = data.status
   }
 
   useEffect(() => { fetchOrder() }, [orderId])
 
-  // Realtime sul singolo ordine
+  // Due canali realtime: ordine + voci
   useEffect(() => {
-    const ch = supabase
-      .channel(`order-${orderId}`)
+    const chOrder = supabase
+      .channel(`order-status-${orderId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` },
         () => fetchOrder())
       .subscribe()
-    return () => { supabase.removeChannel(ch) }
+
+    const chItems = supabase
+      .channel(`order-items-status-${orderId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'order_items', filter: `order_id=eq.${orderId}` },
+        () => fetchOrder())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'order_items', filter: `order_id=eq.${orderId}` },
+        () => fetchOrder())
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'order_items', filter: `order_id=eq.${orderId}` },
+        () => fetchOrder())
+      .subscribe()
+
+    return () => { supabase.removeChannel(chOrder); supabase.removeChannel(chItems) }
   }, [orderId])
 
   if (loading) return <Spinner />
@@ -54,11 +102,20 @@ export default function OrderStatus() {
 
   const accent = restaurant?.primary_color || T.primary
   const items = order.order_items || []
-  const currentStep = order.status === 'completed' ? 2 : ORDER_FLOW.indexOf(order.status)
-  const isReady = order.status === 'ready' || order.status === 'completed'
+  const catGroups = groupByCategory(items)
+  const allItemsReady = items.length > 0 && items.every(i => i.status === 'ready')
+  const isClosed = !!order.closed_at
+  const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
+
+  const bigStatus = isClosed
+    ? { text: 'Buon appetito!', sub: 'Il tuo ordine è stato completato.', green: true }
+    : allItemsReady
+      ? { text: 'Tutto pronto! 🎉', sub: 'Puoi ritirare il tuo ordine.', green: true }
+      : { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', green: false }
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface }}>
+      {/* Header white-label */}
       <header style={{ background: T.bg, borderBottom: `1px solid ${T.border}`, padding: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
         {restaurant?.logo_url
           ? <img src={restaurant.logo_url} alt="" style={{ height: 36, maxWidth: 110, objectFit: 'contain' }} />
@@ -68,48 +125,60 @@ export default function OrderStatus() {
 
       <div style={{ maxWidth: 520, margin: '0 auto', padding: 20 }}>
         {/* Stato grande */}
-        <div style={{ background: T.bg, border: `1px solid ${isReady ? T.green : T.border}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
+        <div style={{ background: T.bg, border: `1px solid ${bigStatus.green ? T.green : T.border}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
           <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>Ordine #{order.order_number ?? '—'}</span>
-          <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 30, margin: '8px 0 6px', color: isReady ? T.green : T.text }}>
-            {order.status === 'ready' ? 'Il tuo ordine è pronto!' : order.status === 'completed' ? 'Ordine consegnato' : 'Ordine ricevuto'}
+          <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 28, margin: '8px 0 6px', color: bigStatus.green ? T.green : T.text }}>
+            {bigStatus.text}
           </h1>
-          <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>
-            {order.status === 'ready' ? 'Vai a ritirarlo al banco.' : order.status === 'completed' ? 'Buon appetito!' : 'Lo stiamo preparando, tieni aperta questa pagina.'}
-          </p>
+          <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>{bigStatus.sub}</p>
         </div>
 
-        {/* Timeline */}
+        {/* Progresso per portata */}
+        {Object.keys(catGroups).length > 0 && (
+          <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 16 }}>
+            <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
+              Stato portate
+            </h2>
+            {Object.entries(catGroups).map(([cat, catItems], idx, arr) => {
+              const allReady = catItems.every(i => i.status === 'ready')
+              const isLast = idx === arr.length - 1
+              return (
+                <div key={cat} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: isLast ? 'none' : `1px solid ${T.border}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: allReady ? T.green : T.yellow, flexShrink: 0 }} />
+                    <span style={{ fontFamily: T.syne, fontWeight: 600, fontSize: 14, color: T.text }}>{cat}</span>
+                  </div>
+                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: allReady ? T.green : T.yellow, whiteSpace: 'nowrap' }}>
+                    {allReady ? '✓ Pronto' : 'In preparazione'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Riepilogo voci per giro */}
         <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 24, marginBottom: 16 }}>
-          {ORDER_FLOW.map((step, i) => {
-            const done = i <= currentStep
-            const active = i === currentStep && order.status !== 'completed'
-            return (
-              <div key={step} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '8px 0' }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-                  background: done ? accent : T.surfaceAlt, color: done ? '#fff' : T.textMuted,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: T.mono, fontSize: 13,
-                  animation: active ? 'wo-pulse 1.6s infinite' : 'none',
-                }}>{done ? '✓' : i + 1}</div>
-                <span style={{ fontFamily: T.syne, fontWeight: done ? 700 : 500, fontSize: 15, color: done ? T.text : T.textMuted }}>
-                  {STATUS_LABEL[step]}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Riepilogo */}
-        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 24 }}>
           <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 14px' }}>
             {order.customer_name}{order.table_number ? ` · Tavolo ${order.table_number}` : ''}
           </h2>
-          {items.map(it => (
-            <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontFamily: T.syne, fontSize: 14, color: T.text }}>
-                <span style={{ fontFamily: T.mono, color: accent }}>{it.quantity}×</span> {it.item_name}
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textSecondary }}>{money(it.unit_price * it.quantity)}</span>
+          {rounds.map(round => (
+            <div key={round}>
+              {round > 1 && (
+                <div style={{ margin: '10px 0 8px' }}>
+                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: accent, border: `1px solid ${accent}`, borderRadius: T.rBtn, padding: '3px 8px', display: 'inline-block' }}>
+                    ➕ {round}° GIRO
+                  </span>
+                </div>
+              )}
+              {items.filter(i => (i.round ?? 1) === round).map(it => (
+                <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontFamily: T.syne, fontSize: 14, color: T.text }}>
+                    <span style={{ fontFamily: T.mono, color: accent }}>{it.quantity}×</span> {it.item_name}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textSecondary }}>{money(it.unit_price * it.quantity)}</span>
+                </div>
+              ))}
             </div>
           ))}
           <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 8 }}>
@@ -118,7 +187,23 @@ export default function OrderStatus() {
           </div>
         </div>
 
-        <p style={{ textAlign: 'center', fontFamily: T.syne, fontSize: 11, color: T.textMuted, marginTop: 20 }}>Powered by WisiOrder</p>
+        {/* Aggiungi al mio ordine */}
+        {!isClosed && restaurant?.slug && (
+          <button
+            onClick={() => nav(`/r/${restaurant.slug}?addTo=${orderId}`)}
+            style={{
+              width: '100%', background: T.bg, border: `1px solid ${T.border}`,
+              borderRadius: T.rCard, padding: '14px 20px', cursor: 'pointer',
+              fontFamily: T.syne, fontWeight: 700, fontSize: 14, color: T.text,
+              textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 16,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            <span style={{ fontSize: 18 }}>+</span> Aggiungi al mio ordine
+          </button>
+        )}
+
+        <p style={{ textAlign: 'center', fontFamily: T.syne, fontSize: 11, color: T.textMuted, marginTop: 4 }}>Powered by WisiOrder</p>
       </div>
     </div>
   )

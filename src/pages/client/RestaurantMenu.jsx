@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { T } from '../../lib/theme'
 import { money } from '../../lib/format'
@@ -8,14 +8,17 @@ import { Spinner } from '../../components/UI'
 export default function RestaurantMenu() {
   const { slug } = useParams()
   const nav = useNavigate()
+  const [searchParams] = useSearchParams()
+  const addTo = searchParams.get('addTo')
+
   const [restaurant, setRestaurant] = useState(null)
   const [cats, setCats] = useState([])
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
-  const [selected, setSelected] = useState(null) // item aperto in dettaglio
-  const [cart, setCart] = useState([]) // [{item, quantity, note}]
+  const [selected, setSelected] = useState(null)
+  const [cart, setCart] = useState([])
   const [cartOpen, setCartOpen] = useState(false)
   const [checkout, setCheckout] = useState(false)
 
@@ -59,16 +62,36 @@ export default function RestaurantMenu() {
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface, paddingBottom: cartCount > 0 ? 88 : 24 }}>
-      {/* Header brand ristorante (white-label, niente WisiOrder) */}
+      {/* Header brand ristorante (white-label) */}
       <header style={{ background: T.bg, borderBottom: `1px solid ${T.border}`, padding: '20px', display: 'flex', alignItems: 'center', gap: 14, position: 'sticky', top: 0, zIndex: 10 }}>
         {restaurant.logo_url
           ? <img src={restaurant.logo_url} alt="" style={{ height: 44, maxWidth: 120, objectFit: 'contain' }} />
           : <div style={{ width: 44, height: 44, borderRadius: T.rSection, background: accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontFamily: T.syne, fontWeight: 800, fontSize: 20 }}>{restaurant.name[0]}</div>}
         <div>
           <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 22, margin: 0, color: T.text }}>{restaurant.name}</h1>
-          <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary }}>Ordina dal tavolo</span>
+          <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary }}>
+            {addTo ? 'Aggiungi al tuo ordine' : 'Ordina dal tavolo'}
+          </span>
         </div>
       </header>
+
+      {/* Banner modalità aggiunta */}
+      {addTo && (
+        <div style={{
+          background: T.primaryLight, borderBottom: `1px solid ${T.primaryBorder}`,
+          padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 13, color: T.primary }}>
+            Stai aggiungendo al tuo ordine
+          </span>
+          <button
+            onClick={() => nav(`/o/${addTo}`)}
+            style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, color: T.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+          >
+            Annulla
+          </button>
+        </div>
+      )}
 
       <div style={{ maxWidth: 680, margin: '0 auto', padding: 20 }}>
         {items.length === 0 && (
@@ -106,7 +129,6 @@ export default function RestaurantMenu() {
           )
         })}
 
-        {/* Voci senza categoria */}
         <Uncategorized items={items} cats={cats} accent={accent} onPick={setSelected} />
 
         <p style={{ textAlign: 'center', fontFamily: T.syne, fontSize: 11, color: T.textMuted, marginTop: 24 }}>
@@ -123,18 +145,22 @@ export default function RestaurantMenu() {
           fontFamily: T.syne, fontWeight: 700, fontSize: 15, boxShadow: '0 6px 20px rgba(0,0,0,0.15)',
         }}>
           <span>{cartCount} {cartCount === 1 ? 'articolo' : 'articoli'}</span>
-          <span style={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>Vedi ordine · {money(cartTotal)}</span>
+          <span style={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            {addTo ? 'Aggiungi · ' : 'Vedi ordine · '}{money(cartTotal)}
+          </span>
         </button>
       )}
 
       {selected && <ItemDetail item={selected} accent={accent} onClose={() => setSelected(null)} onAdd={addToCart} />}
       {cartOpen && !checkout && (
-        <Cart cart={cart} accent={accent} total={cartTotal} onQty={setQty} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckout(true) }} />
+        <Cart cart={cart} accent={accent} total={cartTotal} addTo={addTo} onQty={setQty} onClose={() => setCartOpen(false)} onCheckout={() => { setCartOpen(false); setCheckout(true) }} />
       )}
       {checkout && (
-        <Checkout restaurant={restaurant} cart={cart} accent={accent} total={cartTotal}
+        <Checkout
+          restaurant={restaurant} cart={cart} accent={accent} total={cartTotal} addTo={addTo}
           onBack={() => { setCheckout(false); setCartOpen(true) }}
-          onPlaced={(orderId) => nav(`/o/${orderId}`)} />
+          onPlaced={(orderId) => nav(`/o/${orderId}`)}
+        />
       )}
     </div>
   )
@@ -167,8 +193,19 @@ function ItemDetail({ item, accent, onClose, onAdd }) {
   const [note, setNote] = useState('')
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(17,17,17,0.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: T.bg, borderRadius: '12px 12px 0 0', width: '100%', maxWidth: 680, maxHeight: '92vh', overflow: 'auto', animation: 'wo-slidein 0.2s ease' }}>
-        {item.photo_url && <img src={item.photo_url} alt="" style={{ width: '100%', height: 220, objectFit: 'cover' }} />}
+      <div onClick={e => e.stopPropagation()} style={{ background: T.bg, borderRadius: '12px 12px 0 0', width: '100%', maxWidth: 680, maxHeight: '92vh', overflow: 'auto', animation: 'wo-slidein 0.2s ease', position: 'relative' }}>
+        {/* Freccia indietro */}
+        <button
+          onClick={onClose}
+          style={{
+            position: 'absolute', top: 12, left: 12, zIndex: 2,
+            background: 'rgba(255,255,255,0.95)', border: `1px solid ${T.border}`,
+            borderRadius: T.rBtn, padding: '7px 12px', cursor: 'pointer',
+            fontFamily: T.syne, fontWeight: 700, fontSize: 13, color: T.text,
+            boxShadow: '0 1px 6px rgba(0,0,0,0.10)', lineHeight: 1,
+          }}
+        >← Indietro</button>
+        {item.photo_url && <img src={item.photo_url} alt="" style={{ width: '100%', height: 220, objectFit: 'cover', display: 'block' }} />}
         <div style={{ padding: 20 }}>
           <h2 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 24, margin: '0 0 6px', color: T.text }}>{item.name}</h2>
           {item.description && <p style={{ fontFamily: T.syne, fontSize: 14, lineHeight: 1.5, color: T.textSecondary, margin: '0 0 14px' }}>{item.description}</p>}
@@ -199,18 +236,20 @@ function ItemDetail({ item, accent, onClose, onAdd }) {
   )
 }
 
-function Cart({ cart, accent, total, onQty, onClose, onCheckout }) {
+function Cart({ cart, accent, total, addTo, onQty, onClose, onCheckout }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(17,17,17,0.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ background: T.bg, borderRadius: '12px 12px 0 0', width: '100%', maxWidth: 680, maxHeight: '92vh', overflow: 'auto', animation: 'wo-slidein 0.2s ease' }}>
         <div style={{ padding: 20 }}>
-          <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 20, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 18px' }}>Il tuo ordine</h2>
+          <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 20, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 18px' }}>
+            {addTo ? 'Aggiungi all\'ordine' : 'Il tuo ordine'}
+          </h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {cart.map((l, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${T.border}`, paddingBottom: 14 }}>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{l.item.name}</span>
-                  {l.note && <span style={{ display: 'block', fontFamily: T.syne, fontSize: 12, color: T.textSecondary, fontStyle: 'italic' }}>“{l.note}”</span>}
+                  {l.note && <span style={{ display: 'block', fontFamily: T.syne, fontSize: 12, color: T.textSecondary, fontStyle: 'italic' }}>"{l.note}"</span>}
                   <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textSecondary }}>{money(l.item.price)}</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', border: `1px solid ${T.border}`, borderRadius: T.rBtn }}>
@@ -234,25 +273,60 @@ function Cart({ cart, accent, total, onQty, onClose, onCheckout }) {
   )
 }
 
-function Checkout({ restaurant, cart, accent, total, onBack, onPlaced }) {
+function Checkout({ restaurant, cart, accent, total, addTo, onBack, onPlaced }) {
   const [name, setName] = useState('')
   const [table, setTable] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   async function place() {
-    if (!name.trim()) { setError('Inserisci il tuo nome.'); return }
     setBusy(true); setError('')
     const payload = cart.map(l => ({ menu_item_id: l.item.id, quantity: l.quantity, note: l.note || null }))
-    const { data, error } = await supabase.rpc('place_order', {
+
+    if (addTo) {
+      const { error: rpcErr } = await supabase.rpc('add_to_order', { p_order_id: addTo, p_items: payload })
+      setBusy(false)
+      if (rpcErr) { setError('Invio fallito. Riprova.'); return }
+      onPlaced(addTo)
+      return
+    }
+
+    if (!name.trim()) { setBusy(false); setError('Inserisci il tuo nome.'); return }
+    const { data, error: rpcErr } = await supabase.rpc('place_order', {
       p_restaurant_id: restaurant.id,
       p_customer_name: name.trim(),
       p_table_number: table.trim() || null,
       p_items: payload,
     })
     setBusy(false)
-    if (error) { setError('Invio fallito. Riprova.'); return }
+    if (rpcErr) { setError('Invio fallito. Riprova.'); return }
     onPlaced(data)
+  }
+
+  if (addTo) {
+    return (
+      <div onClick={onBack} style={{ position: 'fixed', inset: 0, background: 'rgba(17,17,17,0.45)', zIndex: 40, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+        <div onClick={e => e.stopPropagation()} style={{ background: T.bg, borderRadius: '12px 12px 0 0', width: '100%', maxWidth: 680, maxHeight: '92vh', overflow: 'auto', animation: 'wo-slidein 0.2s ease' }}>
+          <div style={{ padding: 20 }}>
+            <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 20, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 8px' }}>
+              Aggiungi all'ordine
+            </h2>
+            <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: '0 0 18px' }}>
+              {cart.reduce((s, l) => s + l.quantity, 0)} {cart.reduce((s, l) => s + l.quantity, 0) === 1 ? 'articolo verrà aggiunto' : 'articoli verranno aggiunti'} al tuo ordine esistente.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0 16px' }}>
+              <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, textTransform: 'uppercase', color: T.textSecondary }}>Totale aggiunta</span>
+              <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 500, color: T.text }}>{money(total)}</span>
+            </div>
+            {error && <p style={{ fontFamily: T.syne, fontSize: 13, color: T.primary, margin: '0 0 12px' }}>{error}</p>}
+            <button onClick={place} disabled={busy} style={{ width: '100%', background: accent, color: '#fff', border: 'none', borderRadius: T.rBtn, padding: '15px', fontFamily: T.syne, fontWeight: 700, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+              {busy ? 'Invio…' : 'Conferma aggiunta'}
+            </button>
+            <button onClick={onBack} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontFamily: T.syne, fontSize: 12, color: T.textSecondary, marginTop: 12 }}>← Torna all'ordine</button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -270,14 +344,11 @@ function Checkout({ restaurant, cart, accent, total, onBack, onPlaced }) {
             <input value={table} onChange={e => setTable(e.target.value)} placeholder="Es. 12" inputMode="numeric"
               style={{ width: '100%', boxSizing: 'border-box', fontFamily: T.syne, fontSize: 15, border: `1px solid ${T.border}`, borderRadius: T.rSection, padding: '11px 12px', outline: 'none' }} />
           </label>
-
           {error && <p style={{ fontFamily: T.syne, fontSize: 13, color: T.primary }}>{error}</p>}
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0 16px' }}>
             <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, textTransform: 'uppercase', color: T.textSecondary }}>Totale</span>
             <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 500, color: T.text }}>{money(total)}</span>
           </div>
-
           <button onClick={place} disabled={busy} style={{ width: '100%', background: accent, color: '#fff', border: 'none', borderRadius: T.rBtn, padding: '15px', fontFamily: T.syne, fontWeight: 700, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
             {busy ? 'Invio…' : 'Invia ordine'}
           </button>
