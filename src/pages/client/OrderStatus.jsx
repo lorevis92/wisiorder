@@ -27,10 +27,8 @@ export default function OrderStatus() {
   const [restaurant, setRestaurant] = useState(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const initialLoadDone = useRef(false)
-  const prevGroupReady = useRef({})
+  const notifiedItems = useRef(new Set())
 
-  // Unlock AudioContext on first user interaction (best-effort)
   useEffect(() => {
     function unlock() { initAudio(); document.removeEventListener('click', unlock); document.removeEventListener('touchstart', unlock) }
     document.addEventListener('click', unlock)
@@ -47,23 +45,12 @@ export default function OrderStatus() {
     if (!data) { setNotFound(true); setLoading(false); return }
 
     const items = data.order_items || []
-    const groups = groupByCategory(items)
-
-    if (initialLoadDone.current) {
-      let anyNewReady = false
-      for (const [cat, catItems] of Object.entries(groups)) {
-        const allReady = catItems.every(i => i.status === 'ready')
-        if (allReady && !prevGroupReady.current[cat]) anyNewReady = true
-      }
-      if (anyNewReady) { beep({ freq: 660, repeat: 3 }); vibrate([200, 100, 200]) }
+    const newlyReady = items.filter(i => i.status === 'ready' && !notifiedItems.current.has(i.id))
+    if (newlyReady.length > 0) {
+      newlyReady.forEach(i => notifiedItems.current.add(i.id))
+      beep({ freq: 660, repeat: 1 })
+      vibrate([150])
     }
-
-    const newPrev = {}
-    for (const [cat, catItems] of Object.entries(groups)) {
-      newPrev[cat] = catItems.every(i => i.status === 'ready')
-    }
-    prevGroupReady.current = newPrev
-    initialLoadDone.current = true
 
     setRestaurant(data.restaurants)
     setOrder(data)
@@ -72,7 +59,6 @@ export default function OrderStatus() {
 
   useEffect(() => { fetchOrder() }, [orderId])
 
-  // Due canali realtime: ordine + voci
   useEffect(() => {
     const chOrder = supabase
       .channel(`order-status-${orderId}`)
@@ -103,6 +89,7 @@ export default function OrderStatus() {
   const accent = restaurant?.primary_color || T.primary
   const items = order.order_items || []
   const catGroups = groupByCategory(items)
+  const anyReady = items.some(i => i.status === 'ready')
   const allItemsReady = items.length > 0 && items.every(i => i.status === 'ready')
   const isClosed = !!order.closed_at
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
@@ -110,12 +97,13 @@ export default function OrderStatus() {
   const bigStatus = isClosed
     ? { text: 'Buon appetito!', sub: 'Il tuo ordine è stato completato.', green: true }
     : allItemsReady
-      ? { text: 'Tutto pronto! 🎉', sub: 'Puoi ritirare il tuo ordine.', green: true }
-      : { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', green: false }
+      ? { text: 'Il tuo ordine è pronto!', sub: 'Puoi ritirare il tuo ordine al banco.', green: true }
+      : anyReady
+        ? { text: 'Alcuni piatti sono pronti!', sub: 'Controlla qui sotto quali portate puoi già ritirare.', green: false }
+        : { text: 'Ordine in attesa', sub: 'Lo stiamo prendendo in carico, tieni aperta questa pagina.', green: false }
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface }}>
-      {/* Header white-label */}
       <header style={{ background: T.bg, borderBottom: `1px solid ${T.border}`, padding: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
         {restaurant?.logo_url
           ? <img src={restaurant.logo_url} alt="" style={{ height: 36, maxWidth: 110, objectFit: 'contain' }} />
@@ -124,7 +112,6 @@ export default function OrderStatus() {
       </header>
 
       <div style={{ maxWidth: 520, margin: '0 auto', padding: 20 }}>
-        {/* Stato grande */}
         <div style={{ background: T.bg, border: `1px solid ${bigStatus.green ? T.green : T.border}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
           <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>Ordine #{order.order_number ?? '—'}</span>
           <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 28, margin: '8px 0 6px', color: bigStatus.green ? T.green : T.text }}>
@@ -133,23 +120,26 @@ export default function OrderStatus() {
           <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>{bigStatus.sub}</p>
         </div>
 
-        {/* Progresso per portata */}
         {Object.keys(catGroups).length > 0 && (
           <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
               Stato portate
             </h2>
             {Object.entries(catGroups).map(([cat, catItems], idx, arr) => {
-              const allReady = catItems.every(i => i.status === 'ready')
+              const catReady = catItems.every(i => i.status === 'ready')
+              const catPreparing = !catReady && catItems.some(i => i.status === 'preparing')
+              const dotColor = catReady ? T.green : catPreparing ? T.yellow : T.textMuted
+              const statusText = catReady ? '✓ Pronto' : catPreparing ? 'In preparazione' : 'In attesa'
+              const statusColor = catReady ? T.green : catPreparing ? T.yellow : T.textMuted
               const isLast = idx === arr.length - 1
               return (
                 <div key={cat} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: isLast ? 'none' : `1px solid ${T.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: allReady ? T.green : T.yellow, flexShrink: 0 }} />
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
                     <span style={{ fontFamily: T.syne, fontWeight: 600, fontSize: 14, color: T.text }}>{cat}</span>
                   </div>
-                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: allReady ? T.green : T.yellow, whiteSpace: 'nowrap' }}>
-                    {allReady ? '✓ Pronto' : 'In preparazione'}
+                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: statusColor, whiteSpace: 'nowrap' }}>
+                    {statusText}
                   </span>
                 </div>
               )
@@ -157,7 +147,6 @@ export default function OrderStatus() {
           </div>
         )}
 
-        {/* Riepilogo voci per giro */}
         <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 24, marginBottom: 16 }}>
           <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 14px' }}>
             {order.customer_name}{order.table_number ? ` · Tavolo ${order.table_number}` : ''}
@@ -187,9 +176,9 @@ export default function OrderStatus() {
           </div>
         </div>
 
-        {/* Aggiungi al mio ordine */}
         {!isClosed && restaurant?.slug && (
           <button
+            type="button"
             onClick={() => nav(`/r/${restaurant.slug}?addTo=${orderId}`)}
             style={{
               width: '100%', background: T.bg, border: `1px solid ${T.border}`,
