@@ -28,7 +28,7 @@ export default function OrderStatus() {
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const initialLoadDone = useRef(false)
-  const prevGroupReady = useRef({})
+  const notifiedItems = useRef(new Set())
 
   // Unlock AudioContext on first user interaction (best-effort)
   useEffect(() => {
@@ -47,23 +47,18 @@ export default function OrderStatus() {
     if (!data) { setNotFound(true); setLoading(false); return }
 
     const items = data.order_items || []
-    const groups = groupByCategory(items)
 
-    if (initialLoadDone.current) {
-      let anyNewReady = false
-      for (const [cat, catItems] of Object.entries(groups)) {
-        const allReady = catItems.every(i => i.status === 'ready')
-        if (allReady && !prevGroupReady.current[cat]) anyNewReady = true
+    if (!initialLoadDone.current) {
+      items.forEach(i => { if (i.status === 'ready') notifiedItems.current.add(i.id) })
+      initialLoadDone.current = true
+    } else {
+      const newlyReady = items.filter(i => i.status === 'ready' && !notifiedItems.current.has(i.id))
+      if (newlyReady.length > 0) {
+        newlyReady.forEach(i => notifiedItems.current.add(i.id))
+        beep({ freq: 660, repeat: 2 })
+        vibrate([200, 100, 200])
       }
-      if (anyNewReady) { beep({ freq: 660, repeat: 3 }); vibrate([200, 100, 200]) }
     }
-
-    const newPrev = {}
-    for (const [cat, catItems] of Object.entries(groups)) {
-      newPrev[cat] = catItems.every(i => i.status === 'ready')
-    }
-    prevGroupReady.current = newPrev
-    initialLoadDone.current = true
 
     setRestaurant(data.restaurants)
     setOrder(data)
