@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
-import { T, STATUS_LABEL } from '../../lib/theme'
+import { T } from '../../lib/theme'
 import { money, relTime } from '../../lib/format'
 import { Button, Badge, Spinner } from '../../components/UI'
 import { initAudio, beep, vibrate } from '../../lib/sound'
+import { useI18n } from '../../lib/i18n'
 
 const isReady = (i) => i.status === 'ready'
 const isPreparing = (i) => i.status === 'preparing'
@@ -18,14 +19,9 @@ const sortItems = (arr) => [...(arr || [])].sort((a, b) => {
 
 const nextStatus = { pending: 'preparing', preparing: 'ready' }
 
-const MENU_OPTIONS = [
-  { key: 'pending', label: 'In attesa' },
-  { key: 'preparing', label: 'In preparazione' },
-  { key: 'ready', label: 'Pronto' },
-]
-
 export default function Dashboard() {
   const { restaurant } = useAuth()
+  const { t } = useI18n()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [soundOn, setSoundOn] = useState(true)
@@ -73,8 +69,8 @@ export default function Dashboard() {
   }, [restaurant.id, load])
 
   useEffect(() => {
-    const t = setInterval(() => setOrders(o => [...o]), 30000)
-    return () => clearInterval(t)
+    const timer = setInterval(() => setOrders(o => [...o]), 30000)
+    return () => clearInterval(timer)
   }, [])
 
   function patchItem(orderId, itemId, status) {
@@ -124,14 +120,14 @@ export default function Dashboard() {
   }
 
   async function rejectOrder(order) {
-    if (!confirm(`Rifiutare l'ordine #${order.order_number ?? '—'} di ${order.customer_name}?`)) return
+    if (!confirm(`${t('dashboard.rejectConfirm')} #${order.order_number ?? '—'} (${order.customer_name})?`)) return
     setOrders(prev => prev.filter(o => o.id !== order.id))
     await supabase.from('orders').update({ confirmation_status: 'rejected', closed_at: new Date().toISOString() }).eq('id', order.id)
   }
 
   async function closeOrder(order) {
     const notReady = (order.order_items || []).some(i => !isReady(i))
-    if (notReady && !confirm('Ci sono voci non ancora pronte. Chiudi comunque il conto?')) return
+    if (notReady && !confirm(t('dashboard.closeUnreadyConfirm'))) return
     setOrders(prev => prev.filter(o => o.id !== order.id))
     await supabase.from('orders').update({ closed_at: new Date().toISOString() }).eq('id', order.id)
   }
@@ -143,23 +139,23 @@ export default function Dashboard() {
   const pendingOrders = orders.filter(o => o.confirmation_status === 'pending_confirmation')
   const activeOrders = orders.filter(o => o.confirmation_status !== 'pending_confirmation' && o.confirmation_status !== 'rejected')
 
-  if (loading) return <Spinner label="Carico ordini…" />
+  if (loading) return <Spinner />
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
-            Ordini in corso
+            {t('dashboard.ordersInProgress')}
           </h1>
           <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textSecondary, margin: '4px 0 0' }}>
             {orders.length === 0
-              ? 'Nessun ordine attivo.'
-              : `${orders.length} ${orders.length === 1 ? 'ordine attivo' : 'ordini attivi'} · aggiornamento in tempo reale`}
+              ? t('dashboard.noActiveOrders')
+              : `${orders.length} · ${t('dashboard.activeOrdersInfo')}`}
           </p>
         </div>
         <Button variant={soundOn ? 'ghost' : 'primary'} onClick={() => soundOn ? setSoundOn(false) : enableSound()}>
-          {soundOn ? '🔔 Suono attivo' : '🔕 Attiva suono'}
+          {soundOn ? `🔔 ${t('dashboard.soundOn')}` : `🔕 ${t('dashboard.soundOff')}`}
         </Button>
       </div>
 
@@ -167,7 +163,7 @@ export default function Dashboard() {
         <div style={{ marginBottom: 28 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0, color: T.primary }}>
-              Da confermare
+              {t('dashboard.toConfirm')}
             </h2>
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.primary, background: T.primaryLight, border: `1px solid ${T.primaryBorder}`, borderRadius: 99, padding: '1px 8px' }}>
               {pendingOrders.length}
@@ -181,9 +177,9 @@ export default function Dashboard() {
         </div>
       )}
 
-      {(pendingOrders.length > 0) && (
+      {pendingOrders.length > 0 && (
         <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px', color: T.text }}>
-          In corso
+          {t('dashboard.ordersInProgress')}
         </h2>
       )}
 
@@ -191,8 +187,8 @@ export default function Dashboard() {
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 48, textAlign: 'center' }}>
           <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary, margin: 0 }}>
             {pendingOrders.length > 0
-              ? 'Nessun ordine confermato in lavorazione.'
-              : 'Quando un cliente invia un ordine comparirà qui, con un avviso sonoro.'}
+              ? t('dashboard.noActiveOrders')
+              : t('dashboard.emptyBoard')}
           </p>
         </div>
       ) : (
@@ -214,6 +210,7 @@ export default function Dashboard() {
 }
 
 function ConfirmCard({ order, onConfirm, onReject }) {
+  const { t } = useI18n()
   const items = sortItems(order.order_items || [])
   const catMap = {}
   const catOrder = []
@@ -237,12 +234,12 @@ function ConfirmCard({ order, onConfirm, onReject }) {
             <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{order.customer_name}</span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-            {order.table_number && <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>}
+            {order.table_number && <Badge color={T.textSecondary}>{t('dashboard.table')} {order.table_number}</Badge>}
             <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>{relTime(order.created_at)}</span>
           </div>
           {!order.table_number && (
             <p style={{ fontFamily: T.syne, fontSize: 11, color: T.textSecondary, margin: '5px 0 0' }}>
-              Ritiro al banco — verifica il nome
+              {t('dashboard.pickupAtCounter')}
             </p>
           )}
         </div>
@@ -275,7 +272,7 @@ function ConfirmCard({ order, onConfirm, onReject }) {
 
       <div style={{ display: 'flex', gap: 10, borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
         <Button variant="primary" onClick={() => onConfirm(order)} style={{ flex: 1 }}>
-          Accetta
+          {t('dashboard.accept')}
         </Button>
         <button
           type="button"
@@ -286,7 +283,7 @@ function ConfirmCard({ order, onConfirm, onReject }) {
             borderRadius: T.rBtn, cursor: 'pointer', padding: '9px 12px',
           }}
         >
-          Rifiuta
+          {t('dashboard.reject')}
         </button>
       </div>
     </div>
@@ -294,6 +291,7 @@ function ConfirmCard({ order, onConfirm, onReject }) {
 }
 
 function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onClose }) {
+  const { t } = useI18n()
   const items = sortItems(order.order_items || [])
   const allReady = items.length > 0 && items.every(isReady)
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
@@ -311,7 +309,7 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
             <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{order.customer_name}</span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-            {order.table_number && <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>}
+            {order.table_number && <Badge color={T.textSecondary}>{t('dashboard.table')} {order.table_number}</Badge>}
             <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>{relTime(order.created_at)}</span>
           </div>
         </div>
@@ -335,7 +333,7 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
             <div key={round}>
               {round > 1 && (
                 <div style={{ marginBottom: 8 }}>
-                  <Badge color={T.primary} bg={T.primaryLight}>➕ {round}° GIRO</Badge>
+                  <Badge color={T.primary} bg={T.primaryLight}>➕ {round}° {t('dashboard.round')}</Badge>
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -358,7 +356,7 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
 
       <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
         <Button variant="danger" onClick={() => onClose(order)} style={{ width: '100%', textAlign: 'center' }}>
-          Chiudi conto
+          {t('dashboard.closeBill')}
         </Button>
       </div>
     </div>
@@ -366,6 +364,7 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
 }
 
 function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemStatus, onAdvanceGroup }) {
+  const { t } = useI18n()
   const [openMenuId, setOpenMenuId] = useState(null)
   const hasPending = catItems.some(isPending)
   const hasPreparing = catItems.some(isPreparing)
@@ -395,7 +394,7 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
               padding: '5px 10px', borderRadius: T.rBtn, cursor: 'pointer', whiteSpace: 'nowrap',
             }}
           >
-            ▸ Tutti in preparazione
+            {t('dashboard.allToPreparing')}
           </button>
         )}
         {!hasPending && hasPreparing && (
@@ -408,7 +407,7 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
               padding: '5px 10px', borderRadius: T.rBtn, cursor: 'pointer', whiteSpace: 'nowrap',
             }}
           >
-            ▸ Tutti pronti
+            {t('dashboard.allToReady')}
           </button>
         )}
       </div>
@@ -430,6 +429,7 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
 }
 
 function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onCloseMenu }) {
+  const { t } = useI18n()
   const statusKey = item.status === 'queued' ? 'pending' : (item.status || 'pending')
   const isAtEnd = statusKey === 'ready'
 
@@ -438,6 +438,12 @@ function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onClose
     : statusKey === 'preparing'
       ? { background: T.yellow, border: `1px solid ${T.yellow}`, color: '#fff' }
       : { background: 'transparent', border: `1px solid ${T.border}`, color: T.textSecondary }
+
+  const menuOptions = [
+    { key: 'pending', label: t('status.pending') },
+    { key: 'preparing', label: t('status.preparing') },
+    { key: 'ready', label: t('status.ready') },
+  ]
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 2px' }}>
@@ -461,7 +467,7 @@ function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onClose
           cursor: isAtEnd ? 'default' : 'pointer',
         }}
       >
-        {STATUS_LABEL[statusKey]}
+        {t('status.' + statusKey)}
       </button>
       <div style={{ position: 'relative', flexShrink: 0 }} data-item-menu={item.id}>
         <span
@@ -476,7 +482,7 @@ function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onClose
             background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard,
             boxShadow: '0 4px 16px rgba(0,0,0,0.10)', minWidth: 160, overflow: 'hidden',
           }}>
-            {MENU_OPTIONS.map(opt => (
+            {menuOptions.map(opt => (
               <div
                 key={opt.key}
                 onClick={() => { onSetStatus(opt.key); onCloseMenu() }}

@@ -4,16 +4,18 @@ import { supabase } from '../../lib/supabase'
 import { T } from '../../lib/theme'
 import { money } from '../../lib/format'
 import { Button, Badge, Field, inputStyle, Spinner } from '../../components/UI'
+import { useI18n } from '../../lib/i18n'
 
 const BUCKET = 'menu-photos'
 
 export default function MenuSetup() {
   const { restaurant } = useAuth()
+  const { t } = useI18n()
   const [cats, setCats] = useState([])
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [newCat, setNewCat] = useState('')
-  const [editing, setEditing] = useState(null) // item in modifica o {new:true, category_id}
+  const [editing, setEditing] = useState(null)
 
   const load = useCallback(async () => {
     const [{ data: c }, { data: i }] = await Promise.all([
@@ -38,8 +40,7 @@ export default function MenuSetup() {
   }
 
   async function deleteCategory(cat) {
-    const n = items.filter(i => i.category_id === cat.id).length
-    if (!confirm(`Eliminare la categoria “${cat.name}”${n ? ` e i suoi ${n} piatti` : ''}?`)) return
+    if (!confirm(`${t('menuSetup.deleteCategoryConfirm')}: "${cat.name}"?`)) return
     await supabase.from('menu_items').delete().eq('category_id', cat.id)
     await supabase.from('menu_categories').delete().eq('id', cat.id)
     load()
@@ -51,33 +52,32 @@ export default function MenuSetup() {
   }
 
   async function deleteItem(item) {
-    if (!confirm(`Eliminare “${item.name}”?`)) return
+    if (!confirm(`${t('menuSetup.deleteDishConfirm')}: "${item.name}"?`)) return
     await supabase.from('menu_items').delete().eq('id', item.id)
     load()
   }
 
-  if (loading) return <Spinner label="Carico il menu…" />
+  if (loading) return <Spinner />
 
   return (
     <div style={{ maxWidth: 860, margin: '0 auto', padding: 20 }}>
       <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 4px' }}>
-        Il tuo menu
+        {t('menuSetup.yourMenu')}
       </h1>
       <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textSecondary, margin: '0 0 24px' }}>
-        Crea categorie, aggiungi piatti con foto e prezzo. Segna come esaurito ciò che è finito.
+        {t('menuSetup.menuIntro')}
       </p>
 
-      {/* Nuova categoria */}
       <form onSubmit={addCategory} style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
         <input style={{ ...inputStyle, flex: 1 }} value={newCat} onChange={e => setNewCat(e.target.value)}
-          placeholder="Nuova categoria (es. Antipasti)" />
-        <Button type="submit">Aggiungi</Button>
+          placeholder={t('menuSetup.newCategory')} />
+        <Button type="submit">{t('common.add')}</Button>
       </form>
 
       {cats.length === 0 && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 40, textAlign: 'center' }}>
           <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>
-            Inizia creando una categoria, poi aggiungi i piatti.
+            {t('menuSetup.noCategories')}
           </p>
         </div>
       )}
@@ -91,7 +91,7 @@ export default function MenuSetup() {
                 {cat.name} <span style={{ color: T.textMuted }}>· {its.length}</span>
               </h2>
               <button onClick={() => deleteCategory(cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: T.syne, fontSize: 11, color: T.textMuted, textTransform: 'uppercase' }}>
-                Elimina
+                {t('common.delete')}
               </button>
             </div>
 
@@ -105,7 +105,7 @@ export default function MenuSetup() {
               marginTop: 10, width: '100%', background: T.primaryLight, border: `1px dashed ${T.primaryBorder}`,
               borderRadius: T.rSection, padding: '12px', cursor: 'pointer', fontFamily: T.syne, fontWeight: 700,
               fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: T.primary,
-            }}>+ Aggiungi piatto</button>
+            }}>{t('menuSetup.addDish')}</button>
           </section>
         )
       })}
@@ -118,6 +118,7 @@ export default function MenuSetup() {
 }
 
 function ItemRow({ item, onToggle, onEdit, onDelete }) {
+  const { t } = useI18n()
   return (
     <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 12, opacity: item.is_available ? 1 : 0.6 }}>
       <div style={{ width: 52, height: 52, borderRadius: T.rSection, background: T.surfaceAlt, flexShrink: 0, overflow: 'hidden' }}>
@@ -126,13 +127,13 @@ function ItemRow({ item, onToggle, onEdit, onDelete }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, color: T.text }}>{item.name}</span>
-          {!item.is_available && <Badge color={T.yellow}>Esaurito</Badge>}
+          {!item.is_available && <Badge color={T.yellow}>{t('menuSetup.soldOut')}</Badge>}
         </div>
         {item.description && <p style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary, margin: '2px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.description}</p>}
       </div>
       <span style={{ fontFamily: T.mono, fontSize: 14, color: T.text, whiteSpace: 'nowrap' }}>{money(item.price)}</span>
       <div style={{ display: 'flex', gap: 6 }}>
-        <button onClick={() => onToggle(item)} title={item.is_available ? 'Segna esaurito' : 'Rendi disponibile'}
+        <button onClick={() => onToggle(item)}
           style={{ border: `1px solid ${T.border}`, borderRadius: T.rBtn, background: T.surface, cursor: 'pointer', padding: '6px 8px', fontSize: 13 }}>
           {item.is_available ? '✓' : '↺'}
         </button>
@@ -144,6 +145,7 @@ function ItemRow({ item, onToggle, onEdit, onDelete }) {
 }
 
 function ItemEditor({ restaurant, item, onClose, onSaved }) {
+  const { t } = useI18n()
   const isNew = item.new
   const [name, setName] = useState(item.name || '')
   const [description, setDescription] = useState(item.description || '')
@@ -170,8 +172,8 @@ function ItemEditor({ restaurant, item, onClose, onSaved }) {
     e.preventDefault()
     setError('')
     const p = parseFloat(price.replace(',', '.'))
-    if (!name.trim()) { setError('Inserisci il nome del piatto.'); return }
-    if (isNaN(p) || p < 0) { setError('Inserisci un prezzo valido.'); return }
+    if (!name.trim()) { setError(t('menuSetup.enterName')); return }
+    if (isNaN(p) || p < 0) { setError(t('menuSetup.enterPrice')); return }
     setBusy(true)
     const payload = { name: name.trim(), description: description.trim() || null, price: p, photo_url: photoUrl || null }
     let err
@@ -193,27 +195,27 @@ function ItemEditor({ restaurant, item, onClose, onSaved }) {
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(17,17,17,0.4)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: T.bg, borderRadius: T.rCard, border: `1px solid ${T.border}`, padding: 24, width: '100%', maxWidth: 460, maxHeight: '90vh', overflow: 'auto' }}>
         <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 18, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 18px' }}>
-          {isNew ? 'Nuovo piatto' : 'Modifica piatto'}
+          {isNew ? t('menuSetup.newDish') : t('menuSetup.editDish')}
         </h2>
         <form onSubmit={save}>
-          <Field label="Nome">
+          <Field label={t('menuSetup.dishName')}>
             <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} placeholder="Pad Thai" />
           </Field>
-          <Field label="Descrizione">
+          <Field label={t('common.description')}>
             <textarea style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} value={description}
               onChange={e => setDescription(e.target.value)} placeholder="Noodles di riso saltati, gamberi, arachidi, lime" />
           </Field>
-          <Field label="Prezzo (CHF)">
+          <Field label={t('common.price')}>
             <input style={inputStyle} value={price} onChange={e => setPrice(e.target.value)} placeholder="14.50" inputMode="decimal" />
           </Field>
-          <Field label="Foto">
+          <Field label={t('common.photo')}>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <div style={{ width: 64, height: 64, borderRadius: T.rSection, background: T.surfaceAlt, overflow: 'hidden', flexShrink: 0 }}>
                 {photoUrl && <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
               </div>
               <label style={{ flex: 1 }}>
                 <span style={{ display: 'inline-block', fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: T.text, border: `1px solid ${T.border}`, borderRadius: T.rBtn, padding: '9px 14px', cursor: 'pointer', background: T.surface }}>
-                  {uploading ? 'Caricamento…' : (photoUrl ? 'Cambia foto' : 'Carica foto')}
+                  {uploading ? t('common.loading') : (photoUrl ? t('menuSetup.changePhoto') : t('menuSetup.uploadPhoto'))}
                 </span>
                 <input type="file" accept="image/*" onChange={upload} style={{ display: 'none' }} />
               </label>
@@ -224,9 +226,9 @@ function ItemEditor({ restaurant, item, onClose, onSaved }) {
 
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <Button type="submit" disabled={busy || uploading} style={{ flex: 1, opacity: (busy || uploading) ? 0.6 : 1 }}>
-              {busy ? 'Salvataggio…' : 'Salva piatto'}
+              {busy ? t('common.loading') : t('menuSetup.saveDish')}
             </Button>
-            <Button type="button" variant="ghost" onClick={onClose}>Annulla</Button>
+            <Button type="button" variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
           </div>
         </form>
       </div>
