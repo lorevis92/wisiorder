@@ -5,6 +5,8 @@ import { T } from '../../lib/theme'
 import { money } from '../../lib/format'
 import { Spinner } from '../../components/UI'
 import { initAudio, beep, vibrate } from '../../lib/sound'
+import { I18nProvider, useI18n } from '../../lib/i18n'
+import LanguageSelector from '../../components/LanguageSelector'
 
 function groupByCategory(items) {
   const map = {}
@@ -21,8 +23,13 @@ function groupByCategory(items) {
 }
 
 export default function OrderStatus() {
+  return <I18nProvider initialLang="en"><OrderStatusInner /></I18nProvider>
+}
+
+function OrderStatusInner() {
   const { orderId } = useParams()
   const nav = useNavigate()
+  const { t } = useI18n()
   const [order, setOrder] = useState(null)
   const [restaurant, setRestaurant] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -40,7 +47,7 @@ export default function OrderStatus() {
   async function fetchOrder() {
     const { data } = await supabase
       .from('orders')
-      .select('*, order_items(*), restaurants(name, logo_url, primary_color, slug)')
+      .select('*, order_items(*), restaurants(name, logo_url, primary_color, slug, currency)')
       .eq('id', orderId)
       .maybeSingle()
     if (!data) { setNotFound(true); setLoading(false); return }
@@ -90,11 +97,12 @@ export default function OrderStatus() {
   if (loading) return <Spinner />
   if (notFound) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: T.surface }}>
-      <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary }}>Ordine non trovato.</p>
+      <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary }}>{t('orderStatus.notFound')}</p>
     </div>
   )
 
   const accent = restaurant?.primary_color || T.primary
+  const currency = restaurant?.currency
   const items = order.order_items || []
   const catGroups = groupByCategory(items)
   const allItemsReady = items.length > 0 && items.every(i => i.status === 'ready')
@@ -105,24 +113,24 @@ export default function OrderStatus() {
   const anyReady = items.some(i => i.status === 'ready')
   const anyPreparing = items.some(i => i.status === 'preparing')
   const bigStatus = confirmStatus === 'rejected'
-    ? { text: 'Ordine non accettato', sub: 'Rivolgiti al personale del locale.', color: T.primary, borderColor: T.border }
+    ? { text: t('orderStatus.rejectedTitle'), sub: t('orderStatus.rejectedSub'), color: T.primary, borderColor: T.border }
     : confirmStatus === 'pending_confirmation'
       ? {
-          text: 'Da confermare',
+          text: t('orderStatus.toConfirmTitle'),
           sub: order.table_number
-            ? 'Lo staff confermerà il tuo ordine al tavolo.'
-            : `Vai al banco e indica il tuo nome (${order.customer_name}) per confermare.`,
+            ? t('orderStatus.toConfirmTable')
+            : t('orderStatus.toConfirmCounter', { name: order.customer_name }),
           color: T.text, borderColor: T.border,
         }
       : isClosed
-        ? { text: 'Buon appetito!', sub: 'Il tuo ordine è stato completato.', color: T.green, borderColor: T.green }
+        ? { text: t('orderStatus.completed'), sub: t('orderStatus.completedSub'), color: T.green, borderColor: T.green }
         : allItemsReady
-          ? { text: 'Tutto pronto! 🎉', sub: 'Puoi ritirare il tuo ordine.', color: T.green, borderColor: T.green }
+          ? { text: t('orderStatus.allReady'), sub: t('orderStatus.allReadySub'), color: T.green, borderColor: T.green }
           : anyReady
-            ? { text: 'Alcuni piatti sono pronti!', sub: 'Controlla qui sotto quali portate sono pronte.', color: T.text, borderColor: T.border }
+            ? { text: t('orderStatus.somethingReady'), sub: t('orderStatus.somethingReadySub'), color: T.text, borderColor: T.border }
             : anyPreparing
-              ? { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', color: T.text, borderColor: T.border }
-              : { text: 'Ordine ricevuto', sub: 'Lo abbiamo ricevuto, iniziamo a prepararlo a breve.', color: T.text, borderColor: T.border }
+              ? { text: t('orderStatus.inPreparation'), sub: t('orderStatus.inPreparationSub'), color: T.text, borderColor: T.border }
+              : { text: t('orderStatus.orderReceived'), sub: t('orderStatus.orderReceivedSub'), color: T.text, borderColor: T.border }
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface }}>
@@ -130,12 +138,13 @@ export default function OrderStatus() {
         {restaurant?.logo_url
           ? <img src={restaurant.logo_url} alt="" style={{ height: 36, maxWidth: 110, objectFit: 'contain' }} />
           : <div style={{ width: 36, height: 36, borderRadius: T.rSection, background: accent, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: T.syne, fontWeight: 800 }}>{restaurant?.name?.[0]}</div>}
-        <span style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 18, color: T.text }}>{restaurant?.name}</span>
+        <span style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 18, color: T.text, flex: 1 }}>{restaurant?.name}</span>
+        <LanguageSelector compact />
       </header>
 
       <div style={{ maxWidth: 520, margin: '0 auto', padding: 20 }}>
         <div style={{ background: T.bg, border: `1px solid ${bigStatus.borderColor}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>Ordine #{order.order_number ?? '—'}</span>
+          <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>{t('orderStatus.orderNumber')} #{order.order_number ?? '—'}</span>
           <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 28, margin: '8px 0 6px', color: bigStatus.color }}>
             {bigStatus.text}
           </h1>
@@ -145,7 +154,7 @@ export default function OrderStatus() {
         {Object.keys(catGroups).length > 0 && confirmStatus !== 'pending_confirmation' && confirmStatus !== 'rejected' && (
           <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
-              Stato portate
+              {t('orderStatus.courseStatus')}
             </h2>
             {Object.entries(catGroups).map(([cat, catItems], catIdx, catArr) => {
               const sortedItems = [...catItems].sort((a, b) => {
@@ -157,12 +166,12 @@ export default function OrderStatus() {
               return (
                 <div key={cat} style={{ paddingBottom: isLastCat ? 0 : 12, marginBottom: isLastCat ? 0 : 12, borderBottom: isLastCat ? 'none' : `1px solid ${T.border}` }}>
                   <div style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, marginBottom: 6 }}>
-                    {cat}
+                    {cat === 'Altro' ? t('customer.other') : cat}
                   </div>
                   {sortedItems.map((item, itemIdx) => {
                     const sk = item.status === 'queued' ? 'pending' : (item.status || 'pending')
                     const dotColor = sk === 'ready' ? T.green : sk === 'preparing' ? T.yellow : T.textMuted
-                    const label = sk === 'ready' ? 'Pronto' : sk === 'preparing' ? 'In preparazione' : 'In attesa'
+                    const label = sk === 'ready' ? t('status.ready') : sk === 'preparing' ? t('status.preparing') : t('status.pending')
                     const isLastItem = itemIdx === sortedItems.length - 1
                     return (
                       <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '7px 0', borderBottom: isLastItem ? 'none' : `1px solid ${T.border}` }}>
@@ -186,7 +195,7 @@ export default function OrderStatus() {
 
         <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 24, marginBottom: 16 }}>
           <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 14px' }}>
-            {order.customer_name}{order.table_number ? ` · Tavolo ${order.table_number}` : ''}
+            {order.customer_name}{order.table_number ? ` · ${t('dashboard.table')} ${order.table_number}` : ''}
           </h2>
           {rounds.map(round => (
             <div key={round}>
@@ -202,14 +211,14 @@ export default function OrderStatus() {
                   <span style={{ fontFamily: T.syne, fontSize: 14, color: T.text }}>
                     <span style={{ fontFamily: T.mono, color: accent }}>{it.quantity}×</span> {it.item_name}
                   </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textSecondary }}>{money(it.unit_price * it.quantity)}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textSecondary }}>{money(it.unit_price * it.quantity, currency)}</span>
                 </div>
               ))}
             </div>
           ))}
           <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 8 }}>
-            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, textTransform: 'uppercase', color: T.textSecondary }}>Totale</span>
-            <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 500, color: T.text }}>{money(order.total)}</span>
+            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 14, textTransform: 'uppercase', color: T.textSecondary }}>{t('common.total')}</span>
+            <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 500, color: T.text }}>{money(order.total, currency)}</span>
           </div>
         </div>
 
@@ -224,11 +233,11 @@ export default function OrderStatus() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             }}
           >
-            <span style={{ fontSize: 18 }}>+</span> Aggiungi al mio ordine
+            <span style={{ fontSize: 18 }}>+</span> {t('orderStatus.addToMyOrder')}
           </button>
         )}
 
-        <p style={{ textAlign: 'center', fontFamily: T.syne, fontSize: 11, color: T.textMuted, marginTop: 4 }}>Powered by WisiOrder</p>
+        <p style={{ textAlign: 'center', fontFamily: T.syne, fontSize: 11, color: T.textMuted, marginTop: 4 }}>{t('customer.poweredBy')}</p>
       </div>
     </div>
   )

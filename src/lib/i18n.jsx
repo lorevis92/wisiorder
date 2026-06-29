@@ -177,6 +177,7 @@ const TRANSLATIONS = {
   'orderStatus.rejectedSub':      { en:'Please contact the venue staff.', it:'Rivolgiti al personale del locale.', fr:"Veuillez contacter le personnel de l'établissement.", de:'Bitte wenden Sie sich an das Lokal-Personal.', pt:'Por favor, entre em contato com a equipe do estabelecimento.', zh:'请联系场所工作人员。', th:'กรุณาติดต่อเจ้าหน้าที่ของสถานประกอบการ' },
   'orderStatus.courseStatus':     { en:'Course status',    it:'Stato portate',       fr:'État des plats',    de:'Gangstatus',          pt:'Status dos pratos',     zh:'菜品状态',       th:'สถานะเมนู' },
   'orderStatus.addToMyOrder':     { en:'Add to my order',  it:'Aggiungi al mio ordine', fr:'Ajouter à ma commande', de:'Meiner Bestellung hinzufügen', pt:'Adicionar ao meu pedido', zh:'添加到我的订单', th:'เพิ่มในออร์เดอร์ของฉัน' },
+  'orderStatus.notFound':         { en:'Order not found.', it:'Ordine non trovato.',   fr:'Commande introuvable.', de:'Bestellung nicht gefunden.', pt:'Pedido não encontrado.',  zh:'找不到订单。', th:'ไม่พบออร์เดอร์' },
 }
 
 const I18nContext = createContext(null)
