@@ -13,6 +13,7 @@ export default function Settings() {
   const [color, setColor] = useState(restaurant.primary_color || T.primary)
   const [logoUrl, setLogoUrl] = useState(restaurant.logo_url || '')
   const [uploading, setUploading] = useState(false)
+  const [requireConfirmation, setRequireConfirmation] = useState(restaurant.require_confirmation ?? true)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -54,6 +55,7 @@ export default function Settings() {
     setBusy(true); setSaved(false)
     await supabase.from('restaurants').update({
       name: name.trim(), primary_color: color, logo_url: logoUrl || null,
+      require_confirmation: requireConfirmation,
     }).eq('id', restaurant.id)
     await reloadRestaurant()
     setBusy(false); setSaved(true)
@@ -105,6 +107,24 @@ export default function Settings() {
                 <input type="file" accept="image/*" onChange={uploadLogo} style={{ display: 'none' }} />
               </label>
             </div>
+          </Field>
+          <Field label="Conferma ordini">
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={requireConfirmation}
+                onChange={e => setRequireConfirmation(e.target.checked)}
+                style={{ width: 16, height: 16, marginTop: 2, cursor: 'pointer', flexShrink: 0, accentColor: T.primary }}
+              />
+              <div>
+                <span style={{ fontFamily: T.syne, fontSize: 13, color: T.text, display: 'block' }}>
+                  Richiedi conferma degli ordini
+                </span>
+                <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textSecondary, display: 'block', marginTop: 3 }}>
+                  Gli ordini entrano in cucina solo dopo che li accetti. Protegge dagli ordini falsi.
+                </span>
+              </div>
+            </label>
           </Field>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
             <Button onClick={save} disabled={busy} style={{ opacity: busy ? 0.6 : 1 }}>{busy ? 'Salvataggio…' : 'Salva modifiche'}</Button>

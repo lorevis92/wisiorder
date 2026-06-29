@@ -118,6 +118,17 @@ export default function Dashboard() {
     }
   }
 
+  async function confirmOrder(order) {
+    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, confirmation_status: 'confirmed' } : o))
+    await supabase.from('orders').update({ confirmation_status: 'confirmed' }).eq('id', order.id)
+  }
+
+  async function rejectOrder(order) {
+    if (!confirm(`Rifiutare l'ordine #${order.order_number ?? '—'} di ${order.customer_name}?`)) return
+    setOrders(prev => prev.filter(o => o.id !== order.id))
+    await supabase.from('orders').update({ confirmation_status: 'rejected', closed_at: new Date().toISOString() }).eq('id', order.id)
+  }
+
   async function closeOrder(order) {
     const notReady = (order.order_items || []).some(i => !isReady(i))
     if (notReady && !confirm('Ci sono voci non ancora pronte. Chiudi comunque il conto?')) return
@@ -129,11 +140,14 @@ export default function Dashboard() {
     initAudio(); beep({ freq: 660, repeat: 1 }); setSoundOn(true)
   }
 
+  const pendingOrders = orders.filter(o => o.confirmation_status === 'pending_confirmation')
+  const activeOrders = orders.filter(o => o.confirmation_status !== 'pending_confirmation' && o.confirmation_status !== 'rejected')
+
   if (loading) return <Spinner label="Carico ordini…" />
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
             Ordini in corso
@@ -149,15 +163,41 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      {orders.length === 0 ? (
+      {pendingOrders.length > 0 && (
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0, color: T.primary }}>
+              Da confermare
+            </h2>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.primary, background: T.primaryLight, border: `1px solid ${T.primaryBorder}`, borderRadius: 99, padding: '1px 8px' }}>
+              {pendingOrders.length}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
+            {pendingOrders.map(o => (
+              <ConfirmCard key={o.id} order={o} onConfirm={confirmOrder} onReject={rejectOrder} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(pendingOrders.length > 0) && (
+        <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px', color: T.text }}>
+          In corso
+        </h2>
+      )}
+
+      {activeOrders.length === 0 ? (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 48, textAlign: 'center' }}>
           <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary, margin: 0 }}>
-            Quando un cliente invia un ordine comparirà qui, con un avviso sonoro.
+            {pendingOrders.length > 0
+              ? 'Nessun ordine confermato in lavorazione.'
+              : 'Quando un cliente invia un ordine comparirà qui, con un avviso sonoro.'}
           </p>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
-          {orders.map(o => (
+          {activeOrders.map(o => (
             <OrderCard
               key={o.id}
               order={o}
@@ -169,6 +209,86 @@ export default function Dashboard() {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function ConfirmCard({ order, onConfirm, onReject }) {
+  const items = sortItems(order.order_items || [])
+  const catMap = {}
+  const catOrder = []
+  for (const item of items) {
+    const cat = item.category_name || 'Altro'
+    if (!catMap[cat]) { catMap[cat] = []; catOrder.push(cat) }
+    catMap[cat].push(item)
+  }
+  const sortedCats = [...catOrder.filter(c => c !== 'Altro'), ...(catOrder.includes('Altro') ? ['Altro'] : [])]
+
+  return (
+    <div style={{
+      background: T.bg, border: `1px solid ${T.primaryBorder}`,
+      borderRadius: T.rCard, padding: 18,
+      display: 'flex', flexDirection: 'column', gap: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.text }}>#{order.order_number ?? '—'}</span>
+            <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 15, color: T.text }}>{order.customer_name}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+            {order.table_number && <Badge color={T.textSecondary}>Tavolo {order.table_number}</Badge>}
+            <span style={{ fontFamily: T.syne, fontSize: 12, color: T.textMuted }}>{relTime(order.created_at)}</span>
+          </div>
+          {!order.table_number && (
+            <p style={{ fontFamily: T.syne, fontSize: 11, color: T.textSecondary, margin: '5px 0 0' }}>
+              Ritiro al banco — verifica il nome
+            </p>
+          )}
+        </div>
+        <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 15, color: T.text, whiteSpace: 'nowrap' }}>
+          {money(order.total)}
+        </span>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {sortedCats.map(cat => (
+          <div key={cat} style={{ background: T.surface, borderRadius: T.rSection, padding: '8px 12px' }}>
+            <div style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, marginBottom: 5 }}>
+              {cat}
+            </div>
+            {catMap[cat].map(item => (
+              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+                <span style={{ flex: 1, fontFamily: T.syne, fontSize: 13, color: T.text }}>
+                  <span style={{ fontFamily: T.mono, fontWeight: 500, color: T.primary }}>{item.quantity}×</span>{' '}
+                  {item.item_name}
+                  {item.note && <span style={{ fontSize: 11, color: T.textSecondary, fontStyle: 'italic' }}> — "{item.note}"</span>}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, whiteSpace: 'nowrap' }}>
+                  {money(item.unit_price * item.quantity)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+        <Button variant="primary" onClick={() => onConfirm(order)} style={{ flex: 1 }}>
+          Accetta
+        </Button>
+        <button
+          type="button"
+          onClick={() => onReject(order)}
+          style={{
+            flex: 1, background: 'transparent', border: `1px solid ${T.primaryBorder}`, color: T.primary,
+            fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5,
+            borderRadius: T.rBtn, cursor: 'pointer', padding: '9px 12px',
+          }}
+        >
+          Rifiuta
+        </button>
+      </div>
     </div>
   )
 }

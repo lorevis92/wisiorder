@@ -101,17 +101,28 @@ export default function OrderStatus() {
   const isClosed = !!order.closed_at
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
 
+  const confirmStatus = order.confirmation_status
   const anyReady = items.some(i => i.status === 'ready')
   const anyPreparing = items.some(i => i.status === 'preparing')
-  const bigStatus = isClosed
-    ? { text: 'Buon appetito!', sub: 'Il tuo ordine è stato completato.', green: true }
-    : allItemsReady
-      ? { text: 'Tutto pronto! 🎉', sub: 'Puoi ritirare il tuo ordine.', green: true }
-      : anyReady
-        ? { text: 'Alcuni piatti sono pronti!', sub: 'Controlla qui sotto quali portate sono pronte.', green: false }
-        : anyPreparing
-          ? { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', green: false }
-          : { text: 'Ordine ricevuto', sub: 'Lo abbiamo ricevuto, iniziamo a prepararlo a breve.', green: false }
+  const bigStatus = confirmStatus === 'rejected'
+    ? { text: 'Ordine non accettato', sub: 'Rivolgiti al personale del locale.', color: T.primary, borderColor: T.border }
+    : confirmStatus === 'pending_confirmation'
+      ? {
+          text: 'Da confermare',
+          sub: order.table_number
+            ? 'Lo staff confermerà il tuo ordine al tavolo.'
+            : `Vai al banco e indica il tuo nome (${order.customer_name}) per confermare.`,
+          color: T.text, borderColor: T.border,
+        }
+      : isClosed
+        ? { text: 'Buon appetito!', sub: 'Il tuo ordine è stato completato.', color: T.green, borderColor: T.green }
+        : allItemsReady
+          ? { text: 'Tutto pronto! 🎉', sub: 'Puoi ritirare il tuo ordine.', color: T.green, borderColor: T.green }
+          : anyReady
+            ? { text: 'Alcuni piatti sono pronti!', sub: 'Controlla qui sotto quali portate sono pronte.', color: T.text, borderColor: T.border }
+            : anyPreparing
+              ? { text: 'In preparazione…', sub: 'Tieni aperta questa pagina, ti avvisiamo quando è pronto.', color: T.text, borderColor: T.border }
+              : { text: 'Ordine ricevuto', sub: 'Lo abbiamo ricevuto, iniziamo a prepararlo a breve.', color: T.text, borderColor: T.border }
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface }}>
@@ -123,15 +134,15 @@ export default function OrderStatus() {
       </header>
 
       <div style={{ maxWidth: 520, margin: '0 auto', padding: 20 }}>
-        <div style={{ background: T.bg, border: `1px solid ${bigStatus.green ? T.green : T.border}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
+        <div style={{ background: T.bg, border: `1px solid ${bigStatus.borderColor}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
           <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>Ordine #{order.order_number ?? '—'}</span>
-          <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 28, margin: '8px 0 6px', color: bigStatus.green ? T.green : T.text }}>
+          <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 28, margin: '8px 0 6px', color: bigStatus.color }}>
             {bigStatus.text}
           </h1>
           <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>{bigStatus.sub}</p>
         </div>
 
-        {Object.keys(catGroups).length > 0 && (
+        {Object.keys(catGroups).length > 0 && confirmStatus !== 'pending_confirmation' && confirmStatus !== 'rejected' && (
           <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
               Stato portate
@@ -202,7 +213,7 @@ export default function OrderStatus() {
           </div>
         </div>
 
-        {!isClosed && restaurant?.slug && (
+        {!isClosed && restaurant?.slug && confirmStatus !== 'pending_confirmation' && confirmStatus !== 'rejected' && (
           <button
             onClick={() => nav(`/r/${restaurant.slug}?addTo=${orderId}`)}
             style={{
