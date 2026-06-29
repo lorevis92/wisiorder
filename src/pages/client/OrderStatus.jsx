@@ -28,9 +28,8 @@ export default function OrderStatus() {
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const initialLoadDone = useRef(false)
-  const notifiedItems = useRef(new Set())
+  const prevItemStatus = useRef({})
 
-  // Unlock AudioContext on first user interaction (best-effort)
   useEffect(() => {
     function unlock() { initAudio(); document.removeEventListener('click', unlock); document.removeEventListener('touchstart', unlock) }
     document.addEventListener('click', unlock)
@@ -49,15 +48,16 @@ export default function OrderStatus() {
     const items = data.order_items || []
 
     if (!initialLoadDone.current) {
-      items.forEach(i => { if (i.status === 'ready') notifiedItems.current.add(i.id) })
+      const map = {}
+      items.forEach(i => { map[i.id] = i.status })
+      prevItemStatus.current = map
       initialLoadDone.current = true
     } else {
-      const newlyReady = items.filter(i => i.status === 'ready' && !notifiedItems.current.has(i.id))
-      if (newlyReady.length > 0) {
-        newlyReady.forEach(i => notifiedItems.current.add(i.id))
-        beep({ freq: 660, repeat: 2 })
-        vibrate([200, 100, 200])
-      }
+      const justReady = items.some(i => i.status === 'ready' && prevItemStatus.current[i.id] !== 'ready')
+      if (justReady) { beep({ freq: 660, repeat: 2 }); vibrate([200, 100, 200]) }
+      const map = {}
+      items.forEach(i => { map[i.id] = i.status })
+      prevItemStatus.current = map
     }
 
     setRestaurant(data.restaurants)
@@ -67,7 +67,6 @@ export default function OrderStatus() {
 
   useEffect(() => { fetchOrder() }, [orderId])
 
-  // Due canali realtime: ordine + voci
   useEffect(() => {
     const chOrder = supabase
       .channel(`order-status-${orderId}`)
@@ -116,7 +115,6 @@ export default function OrderStatus() {
 
   return (
     <div style={{ minHeight: '100vh', background: T.surface }}>
-      {/* Header white-label */}
       <header style={{ background: T.bg, borderBottom: `1px solid ${T.border}`, padding: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
         {restaurant?.logo_url
           ? <img src={restaurant.logo_url} alt="" style={{ height: 36, maxWidth: 110, objectFit: 'contain' }} />
@@ -125,7 +123,6 @@ export default function OrderStatus() {
       </header>
 
       <div style={{ maxWidth: 520, margin: '0 auto', padding: 20 }}>
-        {/* Stato grande */}
         <div style={{ background: T.bg, border: `1px solid ${bigStatus.green ? T.green : T.border}`, borderRadius: T.rCard, padding: 28, textAlign: 'center', marginBottom: 16 }}>
           <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>Ordine #{order.order_number ?? '—'}</span>
           <h1 style={{ fontFamily: T.georgia, fontWeight: 700, fontSize: 28, margin: '8px 0 6px', color: bigStatus.green ? T.green : T.text }}>
@@ -134,7 +131,6 @@ export default function OrderStatus() {
           <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>{bigStatus.sub}</p>
         </div>
 
-        {/* Progresso per portata */}
         {Object.keys(catGroups).length > 0 && (
           <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
@@ -142,9 +138,9 @@ export default function OrderStatus() {
             </h2>
             {Object.entries(catGroups).map(([cat, catItems], idx, arr) => {
               const allReady = catItems.every(i => i.status === 'ready')
-              const anyPreparing = catItems.some(i => i.status === 'preparing')
-              const dotColor = allReady ? T.green : anyPreparing ? T.yellow : T.textMuted
-              const label = allReady ? '✓ Pronto' : anyPreparing ? 'In preparazione' : 'In attesa'
+              const anyPrep = catItems.some(i => i.status === 'preparing')
+              const dotColor = allReady ? T.green : anyPrep ? T.yellow : T.textMuted
+              const label = allReady ? '✓ Pronto' : anyPrep ? 'In preparazione' : 'In attesa'
               const isLast = idx === arr.length - 1
               return (
                 <div key={cat} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: isLast ? 'none' : `1px solid ${T.border}` }}>
@@ -161,7 +157,6 @@ export default function OrderStatus() {
           </div>
         )}
 
-        {/* Riepilogo voci per giro */}
         <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 24, marginBottom: 16 }}>
           <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 14px' }}>
             {order.customer_name}{order.table_number ? ` · Tavolo ${order.table_number}` : ''}
@@ -191,7 +186,6 @@ export default function OrderStatus() {
           </div>
         </div>
 
-        {/* Aggiungi al mio ordine */}
         {!isClosed && restaurant?.slug && (
           <button
             onClick={() => nav(`/r/${restaurant.slug}?addTo=${orderId}`)}

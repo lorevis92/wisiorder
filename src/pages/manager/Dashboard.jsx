@@ -16,7 +16,13 @@ const sortItems = (arr) => [...(arr || [])].sort((a, b) => {
   return a.id < b.id ? -1 : 1
 })
 
-const cycleStatus = { pending: 'preparing', preparing: 'ready', ready: 'pending' }
+const nextStatus = { pending: 'preparing', preparing: 'ready' }
+
+const MENU_OPTIONS = [
+  { key: 'pending', label: 'In attesa' },
+  { key: 'preparing', label: 'In preparazione' },
+  { key: 'ready', label: 'Pronto' },
+]
 
 export default function Dashboard() {
   const { restaurant } = useAuth()
@@ -83,22 +89,28 @@ export default function Dashboard() {
     }))
   }
 
-  async function cycleItem(orderId, item) {
+  async function advanceItem(orderId, item) {
     const cur = item.status === 'queued' ? 'pending' : item.status
-    const ns = cycleStatus[cur]
+    const ns = nextStatus[cur]
+    if (!ns) return
     patchItem(orderId, item.id, ns)
     await supabase.from('order_items').update({ status: ns }).eq('id', item.id)
   }
 
+  async function setItemStatus(orderId, itemId, status) {
+    patchItem(orderId, itemId, status)
+    await supabase.from('order_items').update({ status }).eq('id', itemId)
+  }
+
   async function advanceGroup(orderId, groupItems) {
-    const pending = groupItems.filter(isPending)
+    const pending = groupItems.filter(i => (i.status === 'queued' ? 'pending' : i.status) === 'pending')
     if (pending.length > 0) {
       const ids = pending.map(i => i.id)
       patchItems(orderId, ids, 'preparing')
       await supabase.from('order_items').update({ status: 'preparing' }).in('id', ids)
       return
     }
-    const preparing = groupItems.filter(isPreparing)
+    const preparing = groupItems.filter(i => i.status === 'preparing')
     if (preparing.length > 0) {
       const ids = preparing.map(i => i.id)
       patchItems(orderId, ids, 'ready')
@@ -149,7 +161,8 @@ export default function Dashboard() {
             <OrderCard
               key={o.id}
               order={o}
-              onCycleItem={cycleItem}
+              onAdvanceItem={advanceItem}
+              onSetItemStatus={setItemStatus}
               onAdvanceGroup={advanceGroup}
               onClose={closeOrder}
             />
@@ -160,7 +173,7 @@ export default function Dashboard() {
   )
 }
 
-function OrderCard({ order, onCycleItem, onAdvanceGroup, onClose }) {
+function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onClose }) {
   const items = sortItems(order.order_items || [])
   const allReady = items.length > 0 && items.every(isReady)
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
@@ -212,7 +225,8 @@ function OrderCard({ order, onCycleItem, onAdvanceGroup, onClose }) {
                     catName={cat}
                     catItems={catMap[cat]}
                     orderId={order.id}
-                    onCycleItem={onCycleItem}
+                    onAdvanceItem={onAdvanceItem}
+                    onSetItemStatus={onSetItemStatus}
                     onAdvanceGroup={onAdvanceGroup}
                   />
                 ))}
@@ -231,9 +245,19 @@ function OrderCard({ order, onCycleItem, onAdvanceGroup, onClose }) {
   )
 }
 
-function CategoryGroup({ catName, catItems, orderId, onCycleItem, onAdvanceGroup }) {
+function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemStatus, onAdvanceGroup }) {
+  const [openMenuId, setOpenMenuId] = useState(null)
   const hasPending = catItems.some(isPending)
   const hasPreparing = catItems.some(isPreparing)
+
+  useEffect(() => {
+    if (!openMenuId) return
+    function handleClick(e) {
+      if (!e.target.closest(`[data-item-menu="${openMenuId}"]`)) setOpenMenuId(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [openMenuId])
 
   return (
     <div style={{ background: T.surface, borderRadius: T.rSection, padding: '10px 12px' }}>
@@ -257,7 +281,11 @@ function CategoryGroup({ catName, catItems, orderId, onCycleItem, onAdvanceGroup
           <ItemRow
             key={item.id}
             item={item}
-            onCycle={() => onCycleItem(orderId, item)}
+            onAdvance={() => onAdvanceItem(orderId, item)}
+            onSetStatus={(status) => onSetItemStatus(orderId, item.id, status)}
+            isMenuOpen={openMenuId === item.id}
+            onOpenMenu={() => setOpenMenuId(item.id)}
+            onCloseMenu={() => setOpenMenuId(null)}
           />
         ))}
       </div>
@@ -265,8 +293,10 @@ function CategoryGroup({ catName, catItems, orderId, onCycleItem, onAdvanceGroup
   )
 }
 
-function ItemRow({ item, onCycle }) {
+function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onCloseMenu }) {
   const statusKey = item.status === 'queued' ? 'pending' : (item.status || 'pending')
+  const isAtEnd = statusKey === 'ready'
+
   const btnStyle = statusKey === 'ready'
     ? { background: T.green, border: `1px solid ${T.green}`, color: '#fff' }
     : statusKey === 'preparing'
@@ -287,15 +317,47 @@ function ItemRow({ item, onCycle }) {
       </span>
       <button
         type="button"
-        onClick={onCycle}
+        onClick={isAtEnd ? undefined : onAdvance}
         style={{
           ...btnStyle,
           fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5,
-          borderRadius: T.rBtn, padding: '6px 12px', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+          borderRadius: T.rBtn, padding: '6px 12px', flexShrink: 0, whiteSpace: 'nowrap',
+          cursor: isAtEnd ? 'default' : 'pointer',
         }}
       >
         {STATUS_LABEL[statusKey]}
       </button>
+      <div style={{ position: 'relative', flexShrink: 0 }} data-item-menu={item.id}>
+        <span
+          onClick={isMenuOpen ? onCloseMenu : onOpenMenu}
+          style={{ fontSize: 18, padding: 4, cursor: 'pointer', color: T.textSecondary, userSelect: 'none', display: 'block', lineHeight: 1 }}
+        >
+          ⋮
+        </span>
+        {isMenuOpen && (
+          <div style={{
+            position: 'absolute', right: 0, top: '100%', zIndex: 100,
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.10)', minWidth: 160, overflow: 'hidden',
+          }}>
+            {MENU_OPTIONS.map(opt => (
+              <div
+                key={opt.key}
+                onClick={() => { onSetStatus(opt.key); onCloseMenu() }}
+                style={{
+                  padding: '10px 14px', cursor: 'pointer',
+                  fontFamily: T.syne, fontSize: 13,
+                  background: statusKey === opt.key ? T.surfaceAlt : 'transparent',
+                  color: statusKey === opt.key ? T.text : T.textSecondary,
+                  fontWeight: statusKey === opt.key ? 700 : 400,
+                }}
+              >
+                {opt.label}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
