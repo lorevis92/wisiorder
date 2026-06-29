@@ -136,21 +136,37 @@ export default function OrderStatus() {
             <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
               Stato portate
             </h2>
-            {Object.entries(catGroups).map(([cat, catItems], idx, arr) => {
-              const allReady = catItems.every(i => i.status === 'ready')
-              const anyPrep = catItems.some(i => i.status === 'preparing')
-              const dotColor = allReady ? T.green : anyPrep ? T.yellow : T.textMuted
-              const label = allReady ? '✓ Pronto' : anyPrep ? 'In preparazione' : 'In attesa'
-              const isLast = idx === arr.length - 1
+            {Object.entries(catGroups).map(([cat, catItems], catIdx, catArr) => {
+              const sortedItems = [...catItems].sort((a, b) => {
+                const ca = a.created_at || '', cb = b.created_at || ''
+                if (ca !== cb) return ca < cb ? -1 : 1
+                return a.id < b.id ? -1 : 1
+              })
+              const isLastCat = catIdx === catArr.length - 1
               return (
-                <div key={cat} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: isLast ? 'none' : `1px solid ${T.border}` }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-                    <span style={{ fontFamily: T.syne, fontWeight: 600, fontSize: 14, color: T.text }}>{cat}</span>
+                <div key={cat} style={{ paddingBottom: isLastCat ? 0 : 12, marginBottom: isLastCat ? 0 : 12, borderBottom: isLastCat ? 'none' : `1px solid ${T.border}` }}>
+                  <div style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, marginBottom: 6 }}>
+                    {cat}
                   </div>
-                  <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: dotColor, whiteSpace: 'nowrap' }}>
-                    {label}
-                  </span>
+                  {sortedItems.map((item, itemIdx) => {
+                    const sk = item.status === 'queued' ? 'pending' : (item.status || 'pending')
+                    const dotColor = sk === 'ready' ? T.green : sk === 'preparing' ? T.yellow : T.textMuted
+                    const label = sk === 'ready' ? 'Pronto' : sk === 'preparing' ? 'In preparazione' : 'In attesa'
+                    const isLastItem = itemIdx === sortedItems.length - 1
+                    return (
+                      <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '7px 0', borderBottom: isLastItem ? 'none' : `1px solid ${T.border}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                          <div style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+                          <span style={{ fontFamily: T.syne, fontSize: 13, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {item.item_name}
+                          </span>
+                        </div>
+                        <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: dotColor, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {label}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
               )
             })}

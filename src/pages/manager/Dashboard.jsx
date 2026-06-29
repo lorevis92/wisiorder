@@ -266,14 +266,30 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
           {catName}
         </span>
         {hasPending && (
-          <Button variant="ghost" onClick={() => onAdvanceGroup(orderId, catItems)} style={{ padding: '4px 10px', fontSize: 11 }}>
-            In preparazione
-          </Button>
+          <button
+            type="button"
+            onClick={() => onAdvanceGroup(orderId, catItems)}
+            style={{
+              background: 'transparent', border: `1px solid ${T.primaryBorder}`, color: T.primary,
+              fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
+              padding: '5px 10px', borderRadius: T.rBtn, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            ▸ Tutti in preparazione
+          </button>
         )}
         {!hasPending && hasPreparing && (
-          <Button variant="primary" onClick={() => onAdvanceGroup(orderId, catItems)} style={{ padding: '4px 10px', fontSize: 11 }}>
-            Pronti
-          </Button>
+          <button
+            type="button"
+            onClick={() => onAdvanceGroup(orderId, catItems)}
+            style={{
+              background: 'transparent', border: `1px solid ${T.primaryBorder}`, color: T.primary,
+              fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
+              padding: '5px 10px', borderRadius: T.rBtn, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            ▸ Tutti pronti
+          </button>
         )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
