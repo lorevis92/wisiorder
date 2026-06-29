@@ -131,6 +131,9 @@ const TRANSLATIONS = {
   'menuSetup.changePhoto':          { en:'Change photo',          it:'Cambia foto',             fr:'Changer la photo',       de:'Foto ändern',           pt:'Alterar foto',           zh:'更换照片',          th:'เปลี่ยนรูปภาพ' },
   'menuSetup.enterName':            { en:'Enter the dish name.',  it:'Inserisci il nome del piatto.', fr:'Entrez le nom du plat.', de:'Geben Sie den Namen des Gerichts ein.', pt:'Digite o nome do prato.', zh:'请输入菜品名称。', th:'กรุณาใส่ชื่อเมนู' },
   'menuSetup.enterPrice':           { en:'Enter a valid price.',  it:'Inserisci un prezzo valido.', fr:'Entrez un prix valide.', de:'Geben Sie einen gültigen Preis ein.', pt:'Digite um preço válido.', zh:'请输入有效价格。', th:'กรุณาใส่ราคาที่ถูกต้อง' },
+  'menuSetup.baseLanguage':         { en:'Main dish language', it:'Lingua principale del piatto', fr:'Langue principale du plat', de:'Hauptsprache des Gerichts', pt:'Idioma principal do prato', zh:'菜品主语言', th:'ภาษาหลักของเมนู' },
+  'menuSetup.translations':         { en:'Translations', it:'Traduzioni', fr:'Traductions', de:'Übersetzungen', pt:'Traduções', zh:'翻译', th:'การแปล' },
+  'menuSetup.translationHint':      { en:'Leave blank to fall back to the base language.', it:'Lascia vuoto per usare il testo nella lingua base come fallback.', fr:'Laisser vide pour utiliser la langue de base par défaut.', de:'Leer lassen, um auf die Basissprache zurückzugreifen.', pt:'Deixe em branco para usar a língua base como fallback.', zh:'留空则回退到基础语言。', th:'ปล่อยว่างเพื่อใช้ภาษาหลักเป็นค่าเริ่มต้น' },
 
   /* ── settings ─────────────────────────────────────────────────────── */
   'settings.settings':                  { en:'Settings',              it:'Impostazioni',          fr:'Paramètres',             de:'Einstellungen',           pt:'Configurações',          zh:'设置',         th:'การตั้งค่า' },

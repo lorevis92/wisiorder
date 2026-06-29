@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { T } from '../../lib/theme'
 import { money } from '../../lib/format'
 import { Button, Badge, Field, inputStyle, Spinner } from '../../components/UI'
-import { useI18n } from '../../lib/i18n'
+import { useI18n, LANGUAGES } from '../../lib/i18n'
 
 const BUCKET = 'menu-photos'
 
@@ -147,13 +147,27 @@ function ItemRow({ item, onToggle, onEdit, onDelete }) {
 function ItemEditor({ restaurant, item, onClose, onSaved }) {
   const { t } = useI18n()
   const isNew = item.new
-  const [name, setName] = useState(item.name || '')
-  const [description, setDescription] = useState(item.description || '')
+
+  const [baseLang, setBaseLang] = useState(item.base_language || restaurant.panel_language || 'en')
+  const [names, setNames] = useState(
+    item.name_i18n && Object.keys(item.name_i18n).length
+      ? item.name_i18n
+      : (item.name ? { [item.base_language || 'en']: item.name } : {})
+  )
+  const [descs, setDescs] = useState(
+    item.description_i18n && Object.keys(item.description_i18n).length
+      ? item.description_i18n
+      : (item.description ? { [item.base_language || 'en']: item.description } : {})
+  )
   const [price, setPrice] = useState(item.price != null ? String(item.price) : '')
   const [photoUrl, setPhotoUrl] = useState(item.photo_url || '')
   const [uploading, setUploading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [transOpen, setTransOpen] = useState(false)
+
+  const baseLangMeta = LANGUAGES.find(l => l.code === baseLang) || LANGUAGES[0]
+  const otherLangs = LANGUAGES.filter(l => l.code !== baseLang)
 
   async function upload(e) {
     const file = e.target.files?.[0]
@@ -172,10 +186,29 @@ function ItemEditor({ restaurant, item, onClose, onSaved }) {
     e.preventDefault()
     setError('')
     const p = parseFloat(price.replace(',', '.'))
-    if (!name.trim()) { setError(t('menuSetup.enterName')); return }
+
+    const cleanNames = Object.fromEntries(
+      Object.entries(names).map(([k, v]) => [k, (v || '').trim()]).filter(([, v]) => v)
+    )
+    const cleanDescs = Object.fromEntries(
+      Object.entries(descs).map(([k, v]) => [k, (v || '').trim()]).filter(([, v]) => v)
+    )
+    const baseName = cleanNames[baseLang] || Object.values(cleanNames)[0] || ''
+
+    if (!baseName) { setError(t('menuSetup.enterName')); return }
     if (isNaN(p) || p < 0) { setError(t('menuSetup.enterPrice')); return }
+
     setBusy(true)
-    const payload = { name: name.trim(), description: description.trim() || null, price: p, photo_url: photoUrl || null }
+    const payload = {
+      name: baseName,
+      description: cleanDescs[baseLang] || null,
+      base_language: baseLang,
+      name_i18n: cleanNames,
+      description_i18n: cleanDescs,
+      price: p,
+      photo_url: photoUrl || null,
+    }
+
     let err
     if (isNew) {
       const { error } = await supabase.from('menu_items').insert({
@@ -198,16 +231,39 @@ function ItemEditor({ restaurant, item, onClose, onSaved }) {
           {isNew ? t('menuSetup.newDish') : t('menuSetup.editDish')}
         </h2>
         <form onSubmit={save}>
-          <Field label={t('menuSetup.dishName')}>
-            <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} placeholder="Pad Thai" />
+          {/* Base language selector */}
+          <Field label={t('menuSetup.baseLanguage')}>
+            <select value={baseLang} onChange={e => setBaseLang(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+              {LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.flag} {l.label}</option>
+              ))}
+            </select>
           </Field>
-          <Field label={t('common.description')}>
-            <textarea style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} value={description}
-              onChange={e => setDescription(e.target.value)} placeholder="Noodles di riso saltati, gamberi, arachidi, lime" />
+
+          {/* Name and description in base language */}
+          <Field label={`${t('menuSetup.dishName')} (${baseLangMeta.label})`}>
+            <input
+              style={inputStyle}
+              value={names[baseLang] || ''}
+              onChange={e => setNames(n => ({ ...n, [baseLang]: e.target.value }))}
+              placeholder="Pad Thai"
+            />
           </Field>
+          <Field label={`${t('common.description')} (${baseLangMeta.label})`}>
+            <textarea
+              style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }}
+              value={descs[baseLang] || ''}
+              onChange={e => setDescs(d => ({ ...d, [baseLang]: e.target.value }))}
+              placeholder="Noodles di riso saltati, gamberi, arachidi, lime"
+            />
+          </Field>
+
+          {/* Price */}
           <Field label={t('common.price')}>
             <input style={inputStyle} value={price} onChange={e => setPrice(e.target.value)} placeholder="14.50" inputMode="decimal" />
           </Field>
+
+          {/* Photo */}
           <Field label={t('common.photo')}>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <div style={{ width: 64, height: 64, borderRadius: T.rSection, background: T.surfaceAlt, overflow: 'hidden', flexShrink: 0 }}>
@@ -221,6 +277,56 @@ function ItemEditor({ restaurant, item, onClose, onSaved }) {
               </label>
             </div>
           </Field>
+
+          {/* Translations accordion */}
+          <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => setTransOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer',
+              }}
+            >
+              <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary }}>
+                {t('menuSetup.translations')}
+              </span>
+              <span style={{ fontFamily: T.syne, fontSize: 11, color: T.textSecondary, letterSpacing: 0.5 }}>
+                {transOpen ? '▲' : '▼'}
+              </span>
+            </button>
+
+            {transOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 10 }}>
+                <p style={{ fontFamily: T.syne, fontSize: 11, color: T.textMuted, margin: '0 0 2px' }}>
+                  {t('menuSetup.translationHint')}
+                </p>
+                {otherLangs.map(lang => (
+                  <div key={lang.code} style={{ background: T.surface, borderRadius: T.rSection, padding: '12px 14px' }}>
+                    <div style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 12, color: T.text, marginBottom: 10 }}>
+                      {lang.flag} {lang.label}
+                    </div>
+                    <Field label={t('menuSetup.dishName')}>
+                      <input
+                        style={inputStyle}
+                        value={names[lang.code] || ''}
+                        onChange={e => setNames(n => ({ ...n, [lang.code]: e.target.value }))}
+                        placeholder={names[baseLang] || ''}
+                      />
+                    </Field>
+                    <Field label={t('common.description')}>
+                      <textarea
+                        style={{ ...inputStyle, minHeight: 48, resize: 'vertical' }}
+                        value={descs[lang.code] || ''}
+                        onChange={e => setDescs(d => ({ ...d, [lang.code]: e.target.value }))}
+                        placeholder={descs[baseLang] || ''}
+                      />
+                    </Field>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {error && <p style={{ fontFamily: T.syne, fontSize: 13, color: T.primary }}>{error}</p>}
 
