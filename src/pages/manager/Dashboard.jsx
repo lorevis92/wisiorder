@@ -8,8 +8,9 @@ import { initAudio, beep, vibrate } from '../../lib/sound'
 import { useI18n } from '../../lib/i18n'
 
 const isReady = (i) => i.status === 'ready'
-const isItemPreparing = (i) => i.status === 'preparing'
-const isPending = (i) => !isReady(i) && !isItemPreparing(i)
+const norm = (s) => s === 'queued' ? 'pending' : (s || 'pending')
+const isPending = (i) => norm(i.status) === 'pending'
+const isItemPreparing = (i) => norm(i.status) === 'preparing'
 
 const sortItems = (arr) => [...(arr || [])].sort((a, b) => {
   const ca = a.created_at || '', cb = b.created_at || ''
@@ -26,6 +27,17 @@ const isReadyOrder = (o) =>
   (o.order_items || []).every(i => i.status === 'ready')
 const isPreparingOrder = (o) => o.confirmation_status === 'confirmed' && !isReadyOrder(o)
 
+function sortCatKeys(keys, catOrder) {
+  return [...keys].sort((a, b) => {
+    if (a === 'Altro') return 1
+    if (b === 'Altro') return -1
+    const ai = (catOrder || {})[a] ?? Infinity
+    const bi = (catOrder || {})[b] ?? Infinity
+    if (ai !== bi) return ai - bi
+    return a.localeCompare(b)
+  })
+}
+
 export default function Dashboard() {
   const { restaurant } = useAuth()
   const { t } = useI18n()
@@ -35,8 +47,17 @@ export default function Dashboard() {
   const [filter, setFilter] = useState('preparing')
   const soundRef = useRef(true)
   soundRef.current = soundOn
+  const catOrderRef = useRef(null)
 
   const load = useCallback(async () => {
+    if (catOrderRef.current === null) {
+      const { data: catRows } = await supabase
+        .from('menu_categories').select('name, sort_order')
+        .eq('restaurant_id', restaurant.id).order('sort_order')
+      const catMap = {}
+      ;(catRows || []).forEach((c, i) => { catMap[c.name] = i })
+      catOrderRef.current = catMap
+    }
     const { data } = await supabase
       .from('orders')
       .select('*, order_items(*)')
@@ -94,7 +115,7 @@ export default function Dashboard() {
   }
 
   async function advanceItem(orderId, item) {
-    const cur = item.status === 'queued' ? 'pending' : item.status
+    const cur = norm(item.status)
     const ns = nextStatus[cur]
     if (!ns) return
     patchItem(orderId, item.id, ns)
@@ -106,25 +127,19 @@ export default function Dashboard() {
     await supabase.from('order_items').update({ status }).eq('id', itemId)
   }
 
-  async function advanceGroup(orderId, groupItems) {
-    const pending = groupItems.filter(i => (i.status === 'queued' ? 'pending' : i.status) === 'pending')
-    if (pending.length > 0) {
-      const ids = pending.map(i => i.id)
-      patchItems(orderId, ids, 'preparing')
-      await supabase.from('order_items').update({ status: 'preparing' }).in('id', ids)
-      return
-    }
-    const preparing = groupItems.filter(i => i.status === 'preparing')
-    if (preparing.length > 0) {
-      const ids = preparing.map(i => i.id)
-      patchItems(orderId, ids, 'ready')
-      await supabase.from('order_items').update({ status: 'ready' }).in('id', ids)
-    }
+  async function advanceGroupAll(orderId, groupItems, groupState) {
+    const next = groupState === 'pending' ? 'preparing' : groupState === 'preparing' ? 'ready' : null
+    if (!next) return
+    const ids = groupItems.map(i => i.id)
+    patchItems(orderId, ids, next)
+    await supabase.from('order_items').update({ status: next }).in('id', ids)
   }
 
   async function confirmOrder(order) {
+    const remaining = orders.filter(o => o.id !== order.id && o.confirmation_status === 'pending_confirmation')
     setOrders(prev => prev.map(o => o.id === order.id ? { ...o, confirmation_status: 'confirmed' } : o))
     await supabase.from('orders').update({ confirmation_status: 'confirmed' }).eq('id', order.id)
+    if (remaining.length === 0) setFilter('preparing')
   }
 
   async function rejectOrder(order) {
@@ -138,6 +153,16 @@ export default function Dashboard() {
     if (notReady && !confirm(t('dashboard.closeUnreadyConfirm'))) return
     setOrders(prev => prev.filter(o => o.id !== order.id))
     await supabase.from('orders').update({ closed_at: new Date().toISOString() }).eq('id', order.id)
+  }
+
+  async function deleteItem(orderId, item) {
+    const order = orders.find(o => o.id === orderId)
+    const count = (order?.order_items || []).length
+    if (count <= 1) { alert(t('dashboard.cantDeleteLast')); return }
+    if (!confirm(t('dashboard.deleteItemConfirm', { name: item.item_name }))) return
+    setOrders(prev => prev.map(o => o.id !== orderId ? o : { ...o, order_items: o.order_items.filter(i => i.id !== item.id) }))
+    await supabase.from('order_items').delete().eq('id', item.id)
+    load()
   }
 
   function enableSound() {
@@ -155,9 +180,9 @@ export default function Dashboard() {
   )
 
   const filterTabs = [
-    { key: 'toAccept',   label: t('dashboard.toConfirm'),        count: toAcceptCount },
-    { key: 'preparing',  label: t('dashboard.preparingOrders'),   count: preparingCount },
-    { key: 'ready',      label: t('dashboard.readyOrders'),       count: readyCount },
+    { key: 'toAccept',  label: t('dashboard.toConfirm'),      count: toAcceptCount },
+    { key: 'preparing', label: t('dashboard.preparingOrders'), count: preparingCount },
+    { key: 'ready',     label: t('dashboard.readyOrders'),     count: readyCount },
   ]
 
   return (
@@ -190,9 +215,7 @@ export default function Dashboard() {
                 textTransform: 'uppercase', letterSpacing: 0.5,
               }}
             >
-              {alert && (
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.primary, flexShrink: 0 }} />
-              )}
+              {alert && <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.primary, flexShrink: 0 }} />}
               {f.label} · {f.count}
             </button>
           )
@@ -213,16 +236,18 @@ export default function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
           {filter === 'toAccept'
             ? visible.map(o => (
-                <ConfirmCard key={o.id} order={o} onConfirm={confirmOrder} onReject={rejectOrder} />
+                <ConfirmCard key={o.id} order={o} catOrder={catOrderRef.current} onConfirm={confirmOrder} onReject={rejectOrder} />
               ))
             : visible.map(o => (
                 <OrderCard
                   key={o.id}
                   order={o}
+                  catOrder={catOrderRef.current}
                   onAdvanceItem={advanceItem}
                   onSetItemStatus={setItemStatus}
-                  onAdvanceGroup={advanceGroup}
+                  onAdvanceGroup={advanceGroupAll}
                   onClose={closeOrder}
+                  onDeleteItem={deleteItem}
                 />
               ))
           }
@@ -232,17 +257,17 @@ export default function Dashboard() {
   )
 }
 
-function ConfirmCard({ order, onConfirm, onReject }) {
+function ConfirmCard({ order, catOrder, onConfirm, onReject }) {
   const { t } = useI18n()
   const items = sortItems(order.order_items || [])
   const catMap = {}
-  const catOrder = []
+  const catList = []
   for (const item of items) {
     const cat = item.category_name || 'Altro'
-    if (!catMap[cat]) { catMap[cat] = []; catOrder.push(cat) }
+    if (!catMap[cat]) { catMap[cat] = []; catList.push(cat) }
     catMap[cat].push(item)
   }
-  const sortedCats = [...catOrder.filter(c => c !== 'Altro'), ...(catOrder.includes('Altro') ? ['Altro'] : [])]
+  const sortedCats = sortCatKeys(catList, catOrder)
 
   return (
     <div style={{
@@ -313,7 +338,7 @@ function ConfirmCard({ order, onConfirm, onReject }) {
   )
 }
 
-function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onClose }) {
+function OrderCard({ order, catOrder, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onClose, onDeleteItem }) {
   const { t } = useI18n()
   const items = sortItems(order.order_items || [])
   const allReady = items.length > 0 && items.every(isReady)
@@ -345,13 +370,13 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
         {rounds.map(round => {
           const roundItems = items.filter(i => (i.round ?? 1) === round)
           const catMap = {}
-          const catOrder = []
+          const catList = []
           for (const item of roundItems) {
             const cat = item.category_name || 'Altro'
-            if (!catMap[cat]) { catMap[cat] = []; catOrder.push(cat) }
+            if (!catMap[cat]) { catMap[cat] = []; catList.push(cat) }
             catMap[cat].push(item)
           }
-          const sortedCats = [...catOrder.filter(c => c !== 'Altro'), ...(catOrder.includes('Altro') ? ['Altro'] : [])]
+          const sortedCats = sortCatKeys(catList, catOrder)
           return (
             <div key={round}>
               {round > 1 && (
@@ -369,6 +394,7 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
                     onAdvanceItem={onAdvanceItem}
                     onSetItemStatus={onSetItemStatus}
                     onAdvanceGroup={onAdvanceGroup}
+                    onDeleteItem={onDeleteItem}
                   />
                 ))}
               </div>
@@ -386,11 +412,20 @@ function OrderCard({ order, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onCl
   )
 }
 
-function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemStatus, onAdvanceGroup }) {
+function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemStatus, onAdvanceGroup, onDeleteItem }) {
   const { t } = useI18n()
   const [openMenuId, setOpenMenuId] = useState(null)
-  const hasPending = catItems.some(isPending)
-  const hasPreparing = catItems.some(isItemPreparing)
+
+  const groupState = catItems.every(i => norm(i.status) === 'ready') ? 'ready'
+    : catItems.some(i => norm(i.status) === 'preparing') ? 'preparing'
+    : catItems.every(i => norm(i.status) === 'pending') ? 'pending'
+    : 'preparing'
+
+  const groupBtnStyle = groupState === 'ready'
+    ? { background: T.green, border: `1px solid ${T.green}`, color: '#fff' }
+    : groupState === 'preparing'
+      ? { background: T.yellow, border: `1px solid ${T.yellow}`, color: '#fff' }
+      : { background: 'transparent', border: `1px solid ${T.border}`, color: T.textSecondary }
 
   useEffect(() => {
     if (!openMenuId) return
@@ -407,32 +442,20 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
         <span style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary }}>
           {catName}
         </span>
-        {hasPending && (
-          <button
-            type="button"
-            onClick={() => onAdvanceGroup(orderId, catItems)}
-            style={{
-              background: 'transparent', border: `1px solid ${T.primaryBorder}`, color: T.primary,
-              fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
-              padding: '5px 10px', borderRadius: T.rBtn, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >
-            {t('dashboard.allToPreparing')}
-          </button>
-        )}
-        {!hasPending && hasPreparing && (
-          <button
-            type="button"
-            onClick={() => onAdvanceGroup(orderId, catItems)}
-            style={{
-              background: 'transparent', border: `1px solid ${T.primaryBorder}`, color: T.primary,
-              fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
-              padding: '5px 10px', borderRadius: T.rBtn, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >
-            {t('dashboard.allToReady')}
-          </button>
-        )}
+        <button
+          type="button"
+          disabled={groupState === 'ready'}
+          onClick={() => onAdvanceGroup(orderId, catItems, groupState)}
+          style={{
+            ...groupBtnStyle,
+            fontFamily: T.syne, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5,
+            padding: '5px 10px', borderRadius: T.rBtn,
+            cursor: groupState === 'ready' ? 'default' : 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {t('status.' + groupState)}
+        </button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {catItems.map(item => (
@@ -441,6 +464,7 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
             item={item}
             onAdvance={() => onAdvanceItem(orderId, item)}
             onSetStatus={(status) => onSetItemStatus(orderId, item.id, status)}
+            onDelete={() => onDeleteItem(orderId, item)}
             isMenuOpen={openMenuId === item.id}
             onOpenMenu={() => setOpenMenuId(item.id)}
             onCloseMenu={() => setOpenMenuId(null)}
@@ -451,9 +475,9 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
   )
 }
 
-function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onCloseMenu }) {
+function ItemRow({ item, onAdvance, onSetStatus, onDelete, isMenuOpen, onOpenMenu, onCloseMenu }) {
   const { t } = useI18n()
-  const statusKey = item.status === 'queued' ? 'pending' : (item.status || 'pending')
+  const statusKey = norm(item.status)
   const isAtEnd = statusKey === 'ready'
 
   const btnStyle = statusKey === 'ready'
@@ -491,6 +515,18 @@ function ItemRow({ item, onAdvance, onSetStatus, isMenuOpen, onOpenMenu, onClose
         }}
       >
         {t('status.' + statusKey)}
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        title="Delete"
+        style={{
+          background: 'transparent', border: `1px solid ${T.primaryBorder}`, color: T.primary,
+          borderRadius: T.rBtn, padding: '5px 7px', cursor: 'pointer', fontSize: 12,
+          flexShrink: 0, lineHeight: 1, display: 'flex', alignItems: 'center',
+        }}
+      >
+        🗑
       </button>
       <div style={{ position: 'relative', flexShrink: 0 }} data-item-menu={item.id}>
         <span
