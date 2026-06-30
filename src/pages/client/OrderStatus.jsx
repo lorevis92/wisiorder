@@ -36,6 +36,7 @@ function OrderStatusInner() {
   const [notFound, setNotFound] = useState(false)
   const initialLoadDone = useRef(false)
   const prevItemStatus = useRef({})
+  const catOrderRef = useRef(null)
 
   useEffect(() => {
     function unlock() { initAudio(); document.removeEventListener('click', unlock); document.removeEventListener('touchstart', unlock) }
@@ -51,6 +52,17 @@ function OrderStatusInner() {
       .eq('id', orderId)
       .maybeSingle()
     if (!data) { setNotFound(true); setLoading(false); return }
+
+    if (catOrderRef.current === null) {
+      const { data: catRows } = await supabase
+        .from('menu_categories')
+        .select('name, sort_order')
+        .eq('restaurant_id', data.restaurant_id)
+        .order('sort_order')
+      const catMap = {}
+      ;(catRows || []).forEach((c, i) => { catMap[c.name] = i })
+      catOrderRef.current = catMap
+    }
 
     const items = data.order_items || []
 
@@ -105,6 +117,17 @@ function OrderStatusInner() {
   const currency = restaurant?.currency
   const items = order.order_items || []
   const catGroups = groupByCategory(items)
+
+  const sortedCatKeys = Object.keys(catGroups).sort((a, b) => {
+    if (a === 'Altro') return 1
+    if (b === 'Altro') return -1
+    const ord = catOrderRef.current || {}
+    const ai = ord[a] ?? Infinity
+    const bi = ord[b] ?? Infinity
+    if (ai !== bi) return ai - bi
+    return a.localeCompare(b)
+  })
+
   const allItemsReady = items.length > 0 && items.every(i => i.status === 'ready')
   const isClosed = !!order.closed_at
   const rounds = [...new Set(items.map(i => i.round ?? 1))].sort((a, b) => a - b)
@@ -151,18 +174,19 @@ function OrderStatusInner() {
           <p style={{ fontFamily: T.syne, fontSize: 14, color: T.textSecondary, margin: 0 }}>{bigStatus.sub}</p>
         </div>
 
-        {Object.keys(catGroups).length > 0 && confirmStatus !== 'pending_confirmation' && confirmStatus !== 'rejected' && (
+        {sortedCatKeys.length > 0 && confirmStatus !== 'pending_confirmation' && confirmStatus !== 'rejected' && (
           <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: '0 0 12px' }}>
               {t('orderStatus.courseStatus')}
             </h2>
-            {Object.entries(catGroups).map(([cat, catItems], catIdx, catArr) => {
+            {sortedCatKeys.map((cat, catIdx) => {
+              const catItems = catGroups[cat]
               const sortedItems = [...catItems].sort((a, b) => {
                 const ca = a.created_at || '', cb = b.created_at || ''
                 if (ca !== cb) return ca < cb ? -1 : 1
                 return a.id < b.id ? -1 : 1
               })
-              const isLastCat = catIdx === catArr.length - 1
+              const isLastCat = catIdx === sortedCatKeys.length - 1
               return (
                 <div key={cat} style={{ paddingBottom: isLastCat ? 0 : 12, marginBottom: isLastCat ? 0 : 12, borderBottom: isLastCat ? 'none' : `1px solid ${T.border}` }}>
                   <div style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, marginBottom: 6 }}>

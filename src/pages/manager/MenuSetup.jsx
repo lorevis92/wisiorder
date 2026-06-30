@@ -57,6 +57,21 @@ export default function MenuSetup() {
     load()
   }
 
+  async function persistOrder(orderedCats) {
+    await Promise.all(orderedCats.map((c, i) =>
+      supabase.from('menu_categories').update({ sort_order: i }).eq('id', c.id)
+    ))
+  }
+
+  async function moveCategory(index, dir) {
+    const target = index + dir
+    if (target < 0 || target >= cats.length) return
+    const newCats = [...cats]
+    ;[newCats[index], newCats[target]] = [newCats[target], newCats[index]]
+    setCats(newCats)
+    await persistOrder(newCats)
+  }
+
   if (loading) return <Spinner />
 
   return (
@@ -82,17 +97,29 @@ export default function MenuSetup() {
         </div>
       )}
 
-      {cats.map(cat => {
+      {cats.map((cat, catIdx) => {
         const its = items.filter(i => i.category_id === cat.id)
+        const arrowStyle = (disabled) => ({
+          border: `1px solid ${T.border}`, borderRadius: T.rBtn, background: T.surface,
+          cursor: disabled ? 'default' : 'pointer', padding: '4px 8px', fontSize: 13,
+          color: T.textSecondary, opacity: disabled ? 0.3 : 1,
+          minWidth: 32, minHeight: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        })
         return (
           <section key={cat.id} style={{ marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: `1px solid ${T.border}`, paddingTop: 12, marginBottom: 12 }}>
               <h2 style={{ fontFamily: T.syne, fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: T.textSecondary, margin: 0 }}>
                 {cat.name} <span style={{ color: T.textMuted }}>· {its.length}</span>
               </h2>
-              <button onClick={() => deleteCategory(cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: T.syne, fontSize: 11, color: T.textMuted, textTransform: 'uppercase' }}>
-                {t('common.delete')}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button type="button" onClick={() => moveCategory(catIdx, -1)} disabled={catIdx === 0}
+                  style={arrowStyle(catIdx === 0)}>▲</button>
+                <button type="button" onClick={() => moveCategory(catIdx, 1)} disabled={catIdx === cats.length - 1}
+                  style={arrowStyle(catIdx === cats.length - 1)}>▼</button>
+                <button onClick={() => deleteCategory(cat)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: T.syne, fontSize: 11, color: T.textMuted, textTransform: 'uppercase', marginLeft: 4 }}>
+                  {t('common.delete')}
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
