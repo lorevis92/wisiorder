@@ -8,8 +8,8 @@ import { initAudio, beep, vibrate } from '../../lib/sound'
 import { useI18n } from '../../lib/i18n'
 
 const isReady = (i) => i.status === 'ready'
-const isPreparing = (i) => i.status === 'preparing'
-const isPending = (i) => !isReady(i) && !isPreparing(i)
+const isItemPreparing = (i) => i.status === 'preparing'
+const isPending = (i) => !isReady(i) && !isItemPreparing(i)
 
 const sortItems = (arr) => [...(arr || [])].sort((a, b) => {
   const ca = a.created_at || '', cb = b.created_at || ''
@@ -19,12 +19,20 @@ const sortItems = (arr) => [...(arr || [])].sort((a, b) => {
 
 const nextStatus = { pending: 'preparing', preparing: 'ready' }
 
+const isToAccept = (o) => o.confirmation_status === 'pending_confirmation'
+const isReadyOrder = (o) =>
+  o.confirmation_status === 'confirmed' &&
+  (o.order_items || []).length > 0 &&
+  (o.order_items || []).every(i => i.status === 'ready')
+const isPreparingOrder = (o) => o.confirmation_status === 'confirmed' && !isReadyOrder(o)
+
 export default function Dashboard() {
   const { restaurant } = useAuth()
   const { t } = useI18n()
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [soundOn, setSoundOn] = useState(true)
+  const [filter, setFilter] = useState('preparing')
   const soundRef = useRef(true)
   soundRef.current = soundOn
 
@@ -136,73 +144,88 @@ export default function Dashboard() {
     initAudio(); beep({ freq: 660, repeat: 1 }); setSoundOn(true)
   }
 
-  const pendingOrders = orders.filter(o => o.confirmation_status === 'pending_confirmation')
-  const activeOrders = orders.filter(o => o.confirmation_status !== 'pending_confirmation' && o.confirmation_status !== 'rejected')
-
   if (loading) return <Spinner />
+
+  const toAcceptCount = orders.filter(isToAccept).length
+  const preparingCount = orders.filter(isPreparingOrder).length
+  const readyCount = orders.filter(isReadyOrder).length
+
+  const visible = orders.filter(
+    filter === 'toAccept' ? isToAccept : filter === 'ready' ? isReadyOrder : isPreparingOrder
+  )
+
+  const filterTabs = [
+    { key: 'toAccept',   label: t('dashboard.toConfirm'),        count: toAcceptCount },
+    { key: 'preparing',  label: t('dashboard.preparingOrders'),   count: preparingCount },
+    { key: 'ready',      label: t('dashboard.readyOrders'),       count: readyCount },
+  ]
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
-            {t('dashboard.ordersInProgress')}
-          </h1>
-          <p style={{ fontFamily: T.syne, fontSize: 13, color: T.textSecondary, margin: '4px 0 0' }}>
-            {orders.length === 0
-              ? t('dashboard.noActiveOrders')
-              : `${orders.length} · ${t('dashboard.activeOrdersInfo')}`}
-          </p>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+        <h1 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 22, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
+          {t('dashboard.ordersInProgress')}
+        </h1>
         <Button variant={soundOn ? 'ghost' : 'primary'} onClick={() => soundOn ? setSoundOn(false) : enableSound()}>
           {soundOn ? `🔔 ${t('dashboard.soundOn')}` : `🔕 ${t('dashboard.soundOff')}`}
         </Button>
       </div>
 
-      {pendingOrders.length > 0 && (
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0, color: T.primary }}>
-              {t('dashboard.toConfirm')}
-            </h2>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.primary, background: T.primaryLight, border: `1px solid ${T.primaryBorder}`, borderRadius: 99, padding: '1px 8px' }}>
-              {pendingOrders.length}
-            </span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
-            {pendingOrders.map(o => (
-              <ConfirmCard key={o.id} order={o} onConfirm={confirmOrder} onReject={rejectOrder} />
-            ))}
-          </div>
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+        {filterTabs.map(f => {
+          const active = filter === f.key
+          const alert = f.key === 'toAccept' && f.count > 0 && !active
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setFilter(f.key)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                background: active ? T.primary : T.surface,
+                color: active ? '#fff' : T.textSecondary,
+                border: `1px solid ${active ? T.primary : alert ? T.primary : T.border}`,
+                borderRadius: 99, padding: '7px 14px', cursor: 'pointer',
+                fontFamily: T.syne, fontWeight: 700, fontSize: 12,
+                textTransform: 'uppercase', letterSpacing: 0.5,
+              }}
+            >
+              {alert && (
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.primary, flexShrink: 0 }} />
+              )}
+              {f.label} · {f.count}
+            </button>
+          )
+        })}
+      </div>
 
-      {pendingOrders.length > 0 && (
-        <h2 style={{ fontFamily: T.syne, fontWeight: 800, fontSize: 15, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 12px', color: T.text }}>
-          {t('dashboard.ordersInProgress')}
-        </h2>
-      )}
-
-      {activeOrders.length === 0 ? (
+      {visible.length === 0 ? (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.rCard, padding: 48, textAlign: 'center' }}>
           <p style={{ fontFamily: T.syne, fontSize: 15, color: T.textSecondary, margin: 0 }}>
-            {pendingOrders.length > 0
-              ? t('dashboard.noActiveOrders')
-              : t('dashboard.emptyBoard')}
+            {filter === 'toAccept'
+              ? t('dashboard.noToAccept')
+              : filter === 'ready'
+                ? t('dashboard.noReady')
+                : t('dashboard.noPreparing')}
           </p>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, alignItems: 'start' }}>
-          {activeOrders.map(o => (
-            <OrderCard
-              key={o.id}
-              order={o}
-              onAdvanceItem={advanceItem}
-              onSetItemStatus={setItemStatus}
-              onAdvanceGroup={advanceGroup}
-              onClose={closeOrder}
-            />
-          ))}
+          {filter === 'toAccept'
+            ? visible.map(o => (
+                <ConfirmCard key={o.id} order={o} onConfirm={confirmOrder} onReject={rejectOrder} />
+              ))
+            : visible.map(o => (
+                <OrderCard
+                  key={o.id}
+                  order={o}
+                  onAdvanceItem={advanceItem}
+                  onSetItemStatus={setItemStatus}
+                  onAdvanceGroup={advanceGroup}
+                  onClose={closeOrder}
+                />
+              ))
+          }
         </div>
       )}
     </div>
@@ -367,7 +390,7 @@ function CategoryGroup({ catName, catItems, orderId, onAdvanceItem, onSetItemSta
   const { t } = useI18n()
   const [openMenuId, setOpenMenuId] = useState(null)
   const hasPending = catItems.some(isPending)
-  const hasPreparing = catItems.some(isPreparing)
+  const hasPreparing = catItems.some(isItemPreparing)
 
   useEffect(() => {
     if (!openMenuId) return
